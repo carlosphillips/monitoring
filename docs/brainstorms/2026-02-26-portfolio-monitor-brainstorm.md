@@ -86,17 +86,17 @@ thresholds:
 
 ### Time Windows (trailing)
 
-All windows are trailing: they roll back from the evaluation date `t`. Each window is defined by its `start_date` (inclusive) through `t` (inclusive). For date `t`:
+All windows are trailing: they roll back from the evaluation date `t`. Each window is defined by its `end_date` (inclusive); the start is derived as `end_date − period + 1 day`. For date `t`:
 
-| Window    | `start_date`           |
-|-----------|------------------------|
-| daily     | `t`                    |
-| monthly   | `t − 1 month + 1 day`  |
-| quarterly | `t − 3 months + 1 day` |
-| annual    | `t − 1 year + 1 day`   |
-| 3-year    | `t − 3 years + 1 day`  |
+| Window    | `end_date` | Start (derived)                |
+|-----------|------------|--------------------------------|
+| daily     | `t`        | `t`                            |
+| monthly   | `t`        | `t − 1 month + 1 day`          |
+| quarterly | `t`        | `t − 3 months + 1 day`         |
+| annual    | `t`        | `t − 1 year + 1 day`           |
+| 3-year    | `t`        | `t − 3 years + 1 day`          |
 
-Example — on Jan 15, 2026: daily start_date = Jan 15; monthly start_date = Dec 16, 2025; annual start_date = Jan 16, 2025; 3-year start_date = Jan 16, 2023.
+Example — on Jan 15, 2026: daily end_date = Jan 15, start = Jan 15; monthly end_date = Jan 15, start = Dec 16, 2025; annual end_date = Jan 15, start = Jan 16, 2025.
 
 Because the system evaluates every date in the full history, each date gets its own independent window set.
 
@@ -124,7 +124,7 @@ Because the system evaluates every date in the full history, each date gets its 
       └── breaches.csv
   ```
   Web dashboard deferred to later.
-- **Trailing windows:** All windows are defined by a `start_date` (inclusive) through the evaluation date (inclusive). Not calendar-aligned — monthly ≠ MTD, annual ≠ YTD.
+- **Trailing windows:** All windows are defined by an `end_date` (inclusive); start is derived as `end_date − period + 1 day`. Not calendar-aligned — monthly ≠ MTD, annual ≠ YTD.
 
 ## Proposed Module Layout
 
