@@ -109,7 +109,7 @@ Because the system evaluates every date in the full history, each date gets its 
 - **Pre-computed exposures as inputs:** The system monitors, not computes. Factor decomposition is out of scope.
 - **Wide CSV format:** `date` + `{layer}_{factor}` columns. One row per date.
 - **YAML for thresholds:** Human-editable, version-controllable, easy to understand.
-- **UV-managed Python package:** `uv run monitor <portfolios-dir> --output <dir>` as the CLI entry point; also accepts explicit portfolio directory paths. `--output` defaults to the portfolios root.
+- **UV-managed Python package:** `uv run monitor [--input <dir>] [--output <dir>]` as the CLI entry point. `--input` defaults to `./input`; `--output` defaults to `./output`.
 - **Per-portfolio config:** Each portfolio has its own `thresholds.yaml`. No shared/global threshold config.
 - **Output format:** Each run produces both HTML and CSV reports. HTML is for human review; CSV is for downstream tooling. Layout under `--output`:
   ```
@@ -117,12 +117,35 @@ Because the system evaluates every date in the full history, each date gets its 
   ├── summary.html       # table: one row per portfolio — breach count by window
   ├── summary.csv        # same data, machine-readable
   ├── portfolio_a/
-  │   ├── report.html    # table: one row per breaching date — date, layer, factor, window, value, threshold
+  │   ├── report.html    # table: one row per breaching date — end_date, layer, factor, window, value, threshold
   │   └── breaches.csv   # same data, machine-readable
   └── portfolio_b/
       ├── report.html
       └── breaches.csv
   ```
+
+  **summary.csv** — one row per `portfolio × window`, breach count:
+  ```
+  portfolio,   window,     breach_count
+  portfolio_a, daily,      0
+  portfolio_a, monthly,    3
+  portfolio_a, quarterly,  5
+  portfolio_a, annual,     12
+  portfolio_a, 3-year,     8
+  portfolio_b, daily,      1
+  ...
+  ```
+
+  **breaches.csv** — one row per breaching `end_date × layer × factor × window`:
+  ```
+  end_date,   layer,    factor, window,    value,   threshold_min, threshold_max
+  2024-03-15, tactical, HML,    annual,    0.067,   -0.05,         0.05
+  2024-03-15, tactical, HML,    3-year,    0.112,   -0.10,         0.10
+  2024-03-16, tactical, HML,    annual,    0.071,   -0.05,         0.05
+  2024-03-16, residual, ,       annual,   -0.0012,  -0.001,        0.001
+  ```
+  Omitted thresholds (asymmetric bounds) are left blank.
+
   Web dashboard deferred to later.
 - **Trailing windows:** All windows are defined by an `end_date` (inclusive); start is derived as `end_date − period + 1 day`. Not calendar-aligned — monthly ≠ MTD, annual ≠ YTD.
 
@@ -137,13 +160,35 @@ monitoring/
 ├── windows/        # Trailing window slicing over exposure series
 ├── breach/         # Breach detection logic
 ├── reports/        # Combined summary + per-portfolio detail reports
-└── cli.py          # Entry point: `uv run monitor <portfolios-dir>`
+└── cli.py          # Entry point: `uv run monitor [--input <dir>] [--output <dir>]`
 ```
 
 ## Resolved Questions
 
 - **Evaluation scope:** Full history — evaluate every date in the CSV and produce a breach history, not just a single latest-date snapshot.
-- **Window metric (contribution to return):** The monitored value for each `layer × factor × window` cell is the **Carino-linked contribution to return** over the trailing window. The daily contribution is `c_{l,f,t} = r_{f,t} × e_{l,f,t}` where `e_{l,f,t}` is the starting exposure for day `t`. Daily contributions are linked across dates in the window using Carino weighting factors derived from the portfolio return, so that contributions sum correctly to the total portfolio return over the period.
+- **Window metric (Carino-linked contribution to return):** The monitored value for each `layer × factor × window` cell is the Carino-linked contribution to return over the trailing window.
+
+  **The problem:** Simply summing daily contributions `c_{l,f,t} = e_{l,f,t} × r_{f,t}` over a multi-day window doesn't equal the geometric portfolio return for the window, because compounding means early-period contributions "earn" growth on subsequent days. Carino linking corrects for this so that contributions sum exactly to the total portfolio return over any window.
+
+  **The intuition:** Each day's contribution is rescaled by how much of the window's total log-return fell on that day. A day where the portfolio moved a lot gets a larger weight; a day where it barely moved gets a smaller one. The log-transform is what makes the rescaling exact under geometric compounding.
+
+  **The formula:** For a window with daily portfolio returns `r_{p,t}` and geometric total return `R_p = ∏(1 + r_{p,t}) − 1`:
+
+  ```
+  k_t = ln(1 + r_{p,t}) / r_{p,t}     # per-day Carino coefficient
+  K   = ln(1 + R_p)    / R_p           # full-window Carino coefficient
+  w_t = k_t / K                         # linking weight for day t
+  ```
+
+  The linked contribution for `(layer, factor)` over the window is:
+
+  ```
+  C_{l,f} = ∑_t w_t × e_{l,f,t} × r_{f,t}
+  ```
+
+  **The key property:** `∑_{l,f} C_{l,f} + C_residual = R_p` — contributions across all layers, factors, and residual sum exactly to the portfolio return for the window.
+
+  **Edge cases:** When `r_{p,t} = 0`, `k_t = 1`; when `R_p = 0`, `K = 1` (both via the limit `ln(1+r)/r → 1` as `r → 0`).
 - **Residual:** Computed by the system as `portfolio_return - sum over all (layer, factor) of (exposure_{l,f,t} × factor_return_{f,t})` per day, then Carino-linked over windows. Monitored as a single scalar with its own thresholds; not decomposed into factors.
 - **Portfolio return:** A `portfolio_return` column in the exposures CSV provides the daily return needed to compute residual.
 - **Portfolio identifier:** The portfolio subdirectory name.
