@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from monitor import DataError
-from monitor.thresholds import ThresholdBounds, load
+from monitor.thresholds import load
 
 
 class TestLoad:

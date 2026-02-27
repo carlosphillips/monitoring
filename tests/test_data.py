@@ -27,7 +27,9 @@ class TestLoadFactorReturns:
 
 
 class TestLoadExposures:
-    def test_basic_loading(self, tmp_input, sample_factor_returns, sample_exposures, sample_threshold_config):
+    def test_basic_loading(
+        self, tmp_input, sample_factor_returns, sample_exposures, sample_threshold_config
+    ):
         from monitor.thresholds import load as load_thresholds
 
         factor_returns = load_factor_returns(tmp_input)

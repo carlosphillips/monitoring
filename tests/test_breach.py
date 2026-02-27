@@ -2,7 +2,7 @@
 
 from datetime import date
 
-from monitor.breach import Breach, detect
+from monitor.breach import detect
 from monitor.carino import Contributions
 from monitor.thresholds import ThresholdBounds, ThresholdConfig
 

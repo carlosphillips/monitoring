@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Portfolio Monitoring Summary</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem; }
+        table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+        th, td { border: 1px solid #ddd; padding: 0.5rem 1rem; text-align: left; }
+        th { background: #f5f5f5; }
+        .breach { color: #c00; font-weight: bold; }
+        .error { background: #fee; color: #c00; padding: 1rem; margin: 1rem 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Portfolio Monitoring Summary</h1>
+
+    {% if errors %}
+    <h2>Errors</h2>
+    {% for name, err in errors.items() %}
+    <div class="error">
+        <strong>{{ name }}:</strong> {{ err }}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if rows %}
+    <table>
+        <thead>
+            <tr>
+                <th>Portfolio</th>
+                <th>Window</th>
+                <th>Breach Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row.portfolio }}</td>
+                <td>{{ row.window }}</td>
+                <td{% if row.breach_count > 0 %} class="breach"{% endif %}>{{ row.breach_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No portfolios processed.</p>
+    {% endif %}
+</body>
+</html>

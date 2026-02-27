@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -89,7 +87,7 @@ def sample_exposures(tmp_input, sample_factor_returns):
     residual = np.random.normal(0, 0.0002, 10)
     data["portfolio_return"] = np.round(daily_contrib_sum + residual, 8)
 
-    cols = ["date", "portfolio_return"] + [f"{l}_{f}" for l in layers for f in factor_cols]
+    cols = ["date", "portfolio_return"] + [f"{ly}_{fk}" for ly in layers for fk in factor_cols]
     df = pd.DataFrame(data)[cols]
 
     path = tmp_input / "portfolios" / "test_portfolio" / "exposures.csv"

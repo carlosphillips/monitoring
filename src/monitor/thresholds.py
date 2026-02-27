@@ -37,7 +37,7 @@ class ThresholdConfig:
 
     def windows_for(self, layer: str, factor: str | None) -> list[str]:
         """Return window names that have thresholds defined for this (layer, factor)."""
-        return [w for (l, f, w), _ in self.thresholds.items() if l == layer and f == factor]
+        return [w for (ly, fk, w), _ in self.thresholds.items() if ly == layer and fk == factor]
 
 
 def load(path: Path) -> ThresholdConfig:
