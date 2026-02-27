@@ -11,11 +11,9 @@ import pandas as pd
 
 from monitor.carino import Contributions
 from monitor.thresholds import ThresholdBounds, ThresholdConfig
-from monitor.windows import WINDOWS
+from monitor.windows import WINDOW_NAMES
 
 logger = logging.getLogger(__name__)
-
-WINDOW_NAMES = [w.name for w in WINDOWS]
 
 
 def build_attribution_row(
@@ -33,7 +31,7 @@ def build_attribution_row(
     row["total_return"] = contributions.total_return
 
     for (layer, factor), arr in exposures_slice.items():
-        row[f"{layer}_{factor}_avg_exposure"] = float(np.mean(arr))
+        row[f"{layer}_{factor}_avg_exposure"] = float(arr.mean())
 
     return row
 
@@ -63,7 +61,8 @@ def _breach_direction(
 ) -> str | None:
     """Return 'upper', 'lower', or None for a value against optional bounds.
 
-    Mirrors breach._is_breach but returns direction string instead of bool.
+    NOTE: breach._is_breach has parallel comparison logic returning bool
+    instead of direction. Update both if comparison semantics change.
     """
     if bounds is None:
         return None
@@ -75,8 +74,8 @@ def _breach_direction(
 
 
 def write(
-    attribution_rows: dict[str, list[dict]],
-    breach_rows: dict[str, list[dict]],
+    attribution_rows: dict[str, list[dict[str, object]]],
+    breach_rows: dict[str, list[dict[str, object]]],
     output_dir: Path,
     layer_factor_pairs: list[tuple[str, str]],
 ) -> None:
@@ -107,10 +106,18 @@ def write(
     logger.info("Wrote %d parquet files to %s", len(WINDOW_NAMES) * 2, output_dir)
 
 
-def _write_parquet(rows: list[dict], columns: list[str], path: Path) -> None:
+def _write_parquet(rows: list[dict[str, object]], columns: list[str], path: Path) -> None:
     """Write a list of row dicts to a parquet file with canonical column order."""
     if rows:
         df = pd.DataFrame(rows, columns=columns)
     else:
         df = pd.DataFrame(columns=columns)
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols):
+        if df[numeric_cols].isin([np.inf, -np.inf]).any().any():
+            logger.warning("Inf values detected in parquet output: %s", path)
+        if df[numeric_cols].isna().any().any():
+            logger.warning("NaN values detected in parquet output: %s", path)
+
     df.to_parquet(path, index=False)

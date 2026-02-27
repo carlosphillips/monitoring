@@ -173,6 +173,21 @@ class TestCLI:
         ])
         assert result.exit_code == 0
 
+    def test_no_parquet_flag_skips_parquet(self, e2e_input, tmp_path):
+        output_dir = tmp_path / "output"
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["--input", str(e2e_input), "--output", str(output_dir), "--no-parquet"]
+        )
+
+        assert result.exit_code == 0
+        # CSV/HTML reports still generated
+        assert (output_dir / "summary.csv").exists()
+        assert (output_dir / "alpha" / "breaches.csv").exists()
+        # Parquet files not generated
+        assert not (output_dir / "alpha" / "attributions").exists()
+        assert not (output_dir / "beta" / "attributions").exists()
+
     def test_carino_invariant_in_e2e(self, e2e_input, tmp_path):
         """Integration test: Carino contributions sum to portfolio return."""
         from monitor import data as data_mod

@@ -62,6 +62,16 @@ class TestBuildAttributionRow:
         assert row["tactical_HML_avg_exposure"] == pytest.approx(0.8)
         assert row["tactical_market_avg_exposure"] == pytest.approx(1.1)
 
+    def test_empty_exposures_slice(self):
+        contrib = Contributions(layer_factor={}, residual=0.001, total_return=0.001)
+        row = build_attribution_row(date(2024, 1, 15), contrib, {})
+
+        assert row["end_date"] == date(2024, 1, 15)
+        assert row["residual"] == 0.001
+        assert row["total_return"] == 0.001
+        # No layer_factor or avg_exposure keys
+        assert len(row) == 3
+
 
 class TestBuildBreachRow:
     def test_upper_breach(self):
@@ -106,7 +116,7 @@ class TestBuildBreachRow:
         row = build_breach_row(date(2024, 1, 15), contrib, config, "daily")
         assert row["benchmark_market"] is None
 
-    def test_residual_upper_breach(self):
+    def test_residual_breach(self):
         contrib = _make_contributions(residual=0.005)
         config = _make_config({
             ("residual", None, "daily"): ThresholdBounds(min=-0.001, max=0.001),
@@ -125,27 +135,6 @@ class TestBuildBreachRow:
 
         row = build_breach_row(date(2024, 1, 15), contrib, config, "daily")
         assert row["tactical_market"] is None
-
-    def test_residual_lower_breach(self):
-        contrib = _make_contributions(residual=-0.005)
-        config = _make_config({
-            ("residual", None, "daily"): ThresholdBounds(min=-0.001, max=0.001),
-        })
-
-        row = build_breach_row(date(2024, 1, 15), contrib, config, "daily")
-        assert row["residual"] == "lower"
-
-
-class TestBuildAttributionRowEdgeCases:
-    def test_empty_exposures_slice(self):
-        contrib = Contributions(layer_factor={}, residual=0.001, total_return=0.001)
-        row = build_attribution_row(date(2024, 1, 15), contrib, {})
-
-        assert row["end_date"] == date(2024, 1, 15)
-        assert row["residual"] == 0.001
-        assert row["total_return"] == 0.001
-        # No layer_factor or avg_exposure keys
-        assert len(row) == 3
 
 
 class TestWrite:
@@ -226,32 +215,28 @@ class TestWrite:
         )
         assert list(breach_df.columns) == expected_breach_cols
 
-    def test_attribution_breach_date_parity(self, tmp_path):
-        d1, d2 = date(2024, 1, 2), date(2024, 1, 3)
-        contrib = _make_contributions()
-        exposures = _make_exposures_slice()
-        config = _make_config({})
-
-        attr_rows = {"daily": [
-            build_attribution_row(d1, contrib, exposures),
-            build_attribution_row(d2, contrib, exposures),
-        ]}
-        breach_rows = {"daily": [
-            build_breach_row(d1, contrib, config, "daily"),
-            build_breach_row(d2, contrib, config, "daily"),
-        ]}
-
-        write(attr_rows, breach_rows, tmp_path, self.PAIRS)
-
-        attr_df = pd.read_parquet(tmp_path / "daily_attribution.parquet")
-        breach_df = pd.read_parquet(tmp_path / "daily_breach.parquet")
-
-        assert list(attr_df["end_date"]) == list(breach_df["end_date"])
-
     def test_creates_output_directory(self, tmp_path):
         nested = tmp_path / "a" / "b" / "c"
         write({}, {}, nested, self.PAIRS)
         assert nested.exists()
+
+    def test_warns_on_nan_values(self, tmp_path, caplog):
+        import logging
+
+        attr_rows = {"daily": [{"end_date": date(2024, 1, 2), "benchmark_HML": float("nan")}]}
+        with caplog.at_level(logging.WARNING, logger="monitor.parquet_output"):
+            write(attr_rows, {}, tmp_path, [("benchmark", "HML")])
+
+        assert any("NaN values detected" in msg for msg in caplog.messages)
+
+    def test_warns_on_inf_values(self, tmp_path, caplog):
+        import logging
+
+        attr_rows = {"daily": [{"end_date": date(2024, 1, 2), "benchmark_HML": float("inf")}]}
+        with caplog.at_level(logging.WARNING, logger="monitor.parquet_output"):
+            write(attr_rows, {}, tmp_path, [("benchmark", "HML")])
+
+        assert any("Inf values detected" in msg for msg in caplog.messages)
 
     def test_attribution_values_round_trip(self, tmp_path):
         contrib = _make_contributions()

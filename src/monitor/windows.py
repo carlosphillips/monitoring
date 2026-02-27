@@ -27,6 +27,8 @@ WINDOWS = [
     WindowDef("3-year", relativedelta(years=3)),
 ]
 
+WINDOW_NAMES: list[str] = [w.name for w in WINDOWS]
+
 
 @dataclass
 class WindowSlice:

@@ -18,7 +18,7 @@ uv sync
 ## Usage
 
 ```sh
-uv run monitor [--input <dir>] [--thresholds <dir>] [--output <dir>]
+uv run monitor [--input <dir>] [--thresholds <dir>] [--output <dir>] [--no-parquet]
 ```
 
 | Option | Default | Description |
@@ -26,6 +26,7 @@ uv run monitor [--input <dir>] [--thresholds <dir>] [--output <dir>]
 | `--input` | `./input` | Root input directory containing `portfolios/` and `factor_returns.csv` |
 | `--thresholds` | `{input}/thresholds` | Directory with per-portfolio YAML threshold configs |
 | `--output` | `./output` | Output directory for generated reports |
+| `--parquet` / `--no-parquet` | `--parquet` | Write per-window parquet attribution and breach files |
 
 Exit codes: `0` on success (even with breaches), `1` on runtime errors.
 
@@ -105,11 +106,26 @@ output/
 ├── summary.html
 ├── portfolio_a/
 │   ├── breaches.csv
-│   └── report.html
+│   ├── report.html
+│   └── attributions/
+│       ├── daily_attribution.parquet
+│       ├── daily_breach.parquet
+│       ├── monthly_attribution.parquet
+│       ├── monthly_breach.parquet
+│       ├── quarterly_attribution.parquet
+│       ├── quarterly_breach.parquet
+│       ├── annual_attribution.parquet
+│       ├── annual_breach.parquet
+│       ├── 3-year_attribution.parquet
+│       └── 3-year_breach.parquet
 └── portfolio_b/
     ├── breaches.csv
-    └── report.html
+    ├── report.html
+    └── attributions/
+        └── ...
 ```
+
+The `attributions/` directory contains per-window parquet files with Carino-linked attribution detail and breach direction indicators. Disable with `--no-parquet`.
 
 ## Development
 
@@ -129,13 +145,14 @@ uv run ruff check src/ tests/
 
 ```
 src/monitor/
-├── cli.py           # CLI entry point (Click)
-├── portfolios.py    # Portfolio discovery and matching
-├── data.py          # CSV loading and validation
-├── thresholds.py    # YAML config loading and threshold lookup
-├── windows.py       # Trailing window slicing (dateutil)
-├── carino.py        # Carino-linked contribution computation (numpy)
-├── breach.py        # Breach detection logic
-├── reports.py       # HTML + CSV report generation (Jinja2)
-└── templates/       # Jinja2 HTML templates
+├── cli.py             # CLI entry point (Click)
+├── portfolios.py      # Portfolio discovery and matching
+├── data.py            # CSV loading and validation
+├── thresholds.py      # YAML config loading and threshold lookup
+├── windows.py         # Trailing window slicing (dateutil)
+├── carino.py          # Carino-linked contribution computation (numpy)
+├── breach.py          # Breach detection logic
+├── reports.py         # HTML + CSV report generation (Jinja2)
+├── parquet_output.py  # Parquet attribution and breach file output
+└── templates/         # Jinja2 HTML templates
 ```

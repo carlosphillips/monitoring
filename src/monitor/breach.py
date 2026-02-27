@@ -74,7 +74,11 @@ def detect(
 
 
 def _is_breach(value: float, min_bound: float | None, max_bound: float | None) -> bool:
-    """Check if value breaches bounds using strict inequality."""
+    """Check if value breaches bounds using strict inequality.
+
+    NOTE: parquet_output._breach_direction has parallel comparison logic
+    returning direction ('upper'/'lower') instead of bool.
+    """
     if min_bound is not None and value < min_bound:
         return True
     if max_bound is not None and value > max_bound:

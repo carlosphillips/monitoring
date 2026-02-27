@@ -8,12 +8,12 @@ from pathlib import Path
 from jinja2 import Environment, PackageLoader
 
 from monitor.breach import Breach
-from monitor.windows import WINDOWS
+from monitor.windows import WINDOW_NAMES
 
 env = Environment(loader=PackageLoader("monitor", "templates"), autoescape=True)
 
 # Ordered window names for consistent output
-WINDOW_ORDER = [w.name for w in WINDOWS]
+WINDOW_ORDER = WINDOW_NAMES
 
 
 def generate(
