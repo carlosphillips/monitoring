@@ -31,6 +31,53 @@ factor_df.to_csv(ROOT / "factor_returns.csv", index=False)
 # Layers
 LAYERS = ["benchmark", "structural", "tactical"]
 
+# Threshold calibration: thresholds scale with factor volatility and exposure size.
+# Window multipliers grow sub-linearly vs sqrt(window_days), so longer windows have
+# progressively tighter bounds relative to contribution distributions → gradual escalation.
+WINDOW_MULTIPLIERS = {
+    "daily": 2.5,
+    "monthly": 6.0,
+    "quarterly": 10.0,
+    "annual": 15.0,
+    "3-year": 25.0,
+}
+
+PORTFOLIO_TIGHTNESS = {
+    "portfolio_a": 1.0,
+    "portfolio_b": 0.65,
+}
+
+RESIDUAL_BASE_STD = 0.0005
+
+
+def _sym(value):
+    """Create symmetric threshold bounds, rounded to 6 decimal places."""
+    v = round(value, 6)
+    return {"min": -v, "max": v}
+
+
+def generate_thresholds(portfolio_name, exposure_scales):
+    """Generate per-portfolio thresholds calibrated to produce gradual escalation."""
+    tightness = PORTFOLIO_TIGHTNESS[portfolio_name]
+    config = {"layers": LAYERS, "thresholds": {}}
+
+    for layer in ["tactical", "structural"]:
+        config["thresholds"][layer] = {}
+        for factor in FACTORS:
+            base = factor_vols[factor] * exposure_scales[layer]
+            config["thresholds"][layer][factor] = {
+                window: _sym(base * mult * tightness)
+                for window, mult in WINDOW_MULTIPLIERS.items()
+            }
+
+    # Residual thresholds (no factor dimension)
+    config["thresholds"]["residual"] = {
+        window: _sym(RESIDUAL_BASE_STD * mult * tightness)
+        for window, mult in WINDOW_MULTIPLIERS.items()
+    }
+
+    return config
+
 
 def generate_portfolio(name: str, exposure_scales: dict):
     """Generate exposures.csv and thresholds for a portfolio."""
@@ -75,35 +122,7 @@ def generate_portfolio(name: str, exposure_scales: dict):
     thresholds_dir = ROOT / "thresholds"
     thresholds_dir.mkdir(parents=True, exist_ok=True)
 
-    config = {
-        "layers": LAYERS,
-        "thresholds": {},
-    }
-
-    # Add thresholds for tactical layer (most likely to breach)
-    config["thresholds"]["tactical"] = {}
-    for factor in FACTORS:
-        config["thresholds"]["tactical"][factor] = {
-            "daily": {"min": -0.005, "max": 0.005},
-            "monthly": {"min": -0.015, "max": 0.015},
-            "quarterly": {"min": -0.025, "max": 0.025},
-            "annual": {"min": -0.04, "max": 0.04},
-            "3-year": {"min": -0.08, "max": 0.08},
-        }
-
-    # Add threshold for structural layer (less strict)
-    config["thresholds"]["structural"] = {}
-    for factor in ["market", "HML"]:
-        config["thresholds"]["structural"][factor] = {
-            "annual": {"min": -0.06, "max": 0.06},
-            "3-year": {"min": -0.12, "max": 0.12},
-        }
-
-    # Residual thresholds
-    config["thresholds"]["residual"] = {
-        "annual": {"min": -0.001, "max": 0.001},
-        "3-year": {"min": -0.002, "max": 0.002},
-    }
+    config = generate_thresholds(name, exposure_scales)
 
     with open(thresholds_dir / f"{name}_thresholds.yaml", "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)

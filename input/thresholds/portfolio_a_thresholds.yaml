@@ -6,103 +6,178 @@ thresholds:
   tactical:
     market:
       daily:
+        min: -0.00125
+        max: 0.00125
+      monthly:
+        min: -0.003
+        max: 0.003
+      quarterly:
         min: -0.005
         max: 0.005
-      monthly:
-        min: -0.015
-        max: 0.015
-      quarterly:
-        min: -0.025
-        max: 0.025
       annual:
-        min: -0.04
-        max: 0.04
+        min: -0.0075
+        max: 0.0075
       3-year:
-        min: -0.08
-        max: 0.08
+        min: -0.0125
+        max: 0.0125
     HML:
       daily:
-        min: -0.005
-        max: 0.005
+        min: -0.000625
+        max: 0.000625
       monthly:
-        min: -0.015
-        max: 0.015
+        min: -0.0015
+        max: 0.0015
       quarterly:
-        min: -0.025
-        max: 0.025
+        min: -0.0025
+        max: 0.0025
       annual:
-        min: -0.04
-        max: 0.04
+        min: -0.00375
+        max: 0.00375
       3-year:
-        min: -0.08
-        max: 0.08
+        min: -0.00625
+        max: 0.00625
     SMB:
       daily:
+        min: -0.0005
+        max: 0.0005
+      monthly:
+        min: -0.0012
+        max: 0.0012
+      quarterly:
+        min: -0.002
+        max: 0.002
+      annual:
+        min: -0.003
+        max: 0.003
+      3-year:
         min: -0.005
         max: 0.005
-      monthly:
-        min: -0.015
-        max: 0.015
-      quarterly:
-        min: -0.025
-        max: 0.025
-      annual:
-        min: -0.04
-        max: 0.04
-      3-year:
-        min: -0.08
-        max: 0.08
     momentum:
       daily:
-        min: -0.005
-        max: 0.005
+        min: -0.00075
+        max: 0.00075
       monthly:
-        min: -0.015
-        max: 0.015
+        min: -0.0018
+        max: 0.0018
       quarterly:
-        min: -0.025
-        max: 0.025
+        min: -0.003
+        max: 0.003
       annual:
-        min: -0.04
-        max: 0.04
+        min: -0.0045
+        max: 0.0045
       3-year:
-        min: -0.08
-        max: 0.08
+        min: -0.0075
+        max: 0.0075
     quality:
+      daily:
+        min: -0.000375
+        max: 0.000375
+      monthly:
+        min: -0.0009
+        max: 0.0009
+      quarterly:
+        min: -0.0015
+        max: 0.0015
+      annual:
+        min: -0.00225
+        max: 0.00225
+      3-year:
+        min: -0.00375
+        max: 0.00375
+  structural:
+    market:
       daily:
         min: -0.005
         max: 0.005
       monthly:
+        min: -0.012
+        max: 0.012
+      quarterly:
+        min: -0.02
+        max: 0.02
+      annual:
+        min: -0.03
+        max: 0.03
+      3-year:
+        min: -0.05
+        max: 0.05
+    HML:
+      daily:
+        min: -0.0025
+        max: 0.0025
+      monthly:
+        min: -0.006
+        max: 0.006
+      quarterly:
+        min: -0.01
+        max: 0.01
+      annual:
         min: -0.015
         max: 0.015
-      quarterly:
+      3-year:
         min: -0.025
         max: 0.025
+    SMB:
+      daily:
+        min: -0.002
+        max: 0.002
+      monthly:
+        min: -0.0048
+        max: 0.0048
+      quarterly:
+        min: -0.008
+        max: 0.008
       annual:
-        min: -0.04
-        max: 0.04
+        min: -0.012
+        max: 0.012
       3-year:
-        min: -0.08
-        max: 0.08
-  structural:
-    market:
+        min: -0.02
+        max: 0.02
+    momentum:
+      daily:
+        min: -0.003
+        max: 0.003
+      monthly:
+        min: -0.0072
+        max: 0.0072
+      quarterly:
+        min: -0.012
+        max: 0.012
       annual:
-        min: -0.06
-        max: 0.06
+        min: -0.018
+        max: 0.018
       3-year:
-        min: -0.12
-        max: 0.12
-    HML:
+        min: -0.03
+        max: 0.03
+    quality:
+      daily:
+        min: -0.0015
+        max: 0.0015
+      monthly:
+        min: -0.0036
+        max: 0.0036
+      quarterly:
+        min: -0.006
+        max: 0.006
       annual:
-        min: -0.06
-        max: 0.06
+        min: -0.009
+        max: 0.009
       3-year:
-        min: -0.12
-        max: 0.12
+        min: -0.015
+        max: 0.015
   residual:
+    daily:
+      min: -0.00125
+      max: 0.00125
+    monthly:
+      min: -0.003
+      max: 0.003
+    quarterly:
+      min: -0.005
+      max: 0.005
     annual:
-      min: -0.001
-      max: 0.001
+      min: -0.0075
+      max: 0.0075
     3-year:
-      min: -0.002
-      max: 0.002
+      min: -0.0125
+      max: 0.0125
