@@ -1,7 +1,7 @@
 ---
 title: "feat: Implement portfolio monitoring system"
 type: feat
-status: active
+status: completed
 date: 2026-02-27
 origin: docs/brainstorms/2026-02-26-portfolio-monitor-brainstorm.md
 ---
@@ -226,29 +226,29 @@ cli.py:
 
 ### Phase 1: Project Setup & Data Layer
 
-- [ ] `pyproject.toml` configured with UV, Click, pandas, numpy, PyYAML, Jinja2, python-dateutil as dependencies; ruff + pytest in dev dependencies
-- [ ] `src/monitor/data.py`: load `factor_returns.csv` and `exposures.csv` with validation (missing dates error, missing factor columns error, unmatched layer columns warning)
-- [ ] `src/monitor/thresholds.py`: load YAML with layer registry, handle residual special case, validate bounds
-- [ ] `src/monitor/portfolios.py`: discover portfolios, match to thresholds, error on unmatched
-- [ ] Sample input data created for 2 portfolios with realistic multi-year history
-- [ ] Tests for all data loading, validation, and error paths
+- [x] `pyproject.toml` configured with UV, Click, pandas, numpy, PyYAML, Jinja2, python-dateutil as dependencies; ruff + pytest in dev dependencies
+- [x] `src/monitor/data.py`: load `factor_returns.csv` and `exposures.csv` with validation (missing dates error, missing factor columns error, unmatched layer columns warning)
+- [x] `src/monitor/thresholds.py`: load YAML with layer registry, handle residual special case, validate bounds
+- [x] `src/monitor/portfolios.py`: discover portfolios, match to thresholds, error on unmatched
+- [x] Sample input data created for 2 portfolios with realistic multi-year history
+- [x] Tests for all data loading, validation, and error paths
 
 ### Phase 2: Computation Engine
 
-- [ ] `src/monitor/windows.py`: trailing window slicing with `relativedelta`, skip when insufficient history
-- [ ] `src/monitor/carino.py`: vectorized Carino-linked contribution computation with edge case handling
-- [ ] `src/monitor/breach.py`: strict inequality comparison, asymmetric bounds, breach collection
-- [ ] Tests verifying Carino invariant (`sum(C) + C_residual = R_p`) across various window sizes
-- [ ] Tests for window skipping, zero returns, single-day windows
+- [x] `src/monitor/windows.py`: trailing window slicing with `relativedelta`, skip when insufficient history
+- [x] `src/monitor/carino.py`: vectorized Carino-linked contribution computation with edge case handling
+- [x] `src/monitor/breach.py`: strict inequality comparison, asymmetric bounds, breach collection
+- [x] Tests verifying Carino invariant (`sum(C) + C_residual = R_p`) across various window sizes
+- [x] Tests for window skipping, zero returns, single-day windows
 
 ### Phase 3: CLI & Reports
 
-- [ ] `src/monitor/reports.py`: generate summary.csv, summary.html, per-portfolio breaches.csv, report.html
-- [ ] `src/monitor/cli.py`: Click-based CLI with `--input`, `--thresholds`, `--output` args
-- [ ] Jinja2 templates for HTML reports (`src/monitor/templates/summary.html.j2`, `src/monitor/templates/report.html.j2`)
-- [ ] Partial failure handling: continue on portfolio error, report errors in console and summary
-- [ ] Exit codes: 0 for success, 1 for errors
-- [ ] End-to-end test: run CLI against sample data, verify output files exist and are correct
+- [x] `src/monitor/reports.py`: generate summary.csv, summary.html, per-portfolio breaches.csv, report.html
+- [x] `src/monitor/cli.py`: Click-based CLI with `--input`, `--thresholds`, `--output` args
+- [x] Jinja2 templates for HTML reports (`src/monitor/templates/summary.html.j2`, `src/monitor/templates/report.html.j2`)
+- [x] Partial failure handling: continue on portfolio error, report errors in console and summary
+- [x] Exit codes: 0 for success, 1 for errors
+- [x] End-to-end test: run CLI against sample data, verify output files exist and are correct
 
 ## Success Metrics
 

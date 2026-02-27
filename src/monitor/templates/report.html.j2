@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ portfolio_name }} — Breach Report</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem; }
+        table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+        th, td { border: 1px solid #ddd; padding: 0.5rem 1rem; text-align: left; }
+        th { background: #f5f5f5; }
+        .value { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>{{ portfolio_name }} — Breach Report</h1>
+
+    {% if breaches %}
+    <p>{{ breaches | length }} breach{{ "es" if breaches | length != 1 else "" }} detected.</p>
+    <table>
+        <thead>
+            <tr>
+                <th>End Date</th>
+                <th>Layer</th>
+                <th>Factor</th>
+                <th>Window</th>
+                <th>Value</th>
+                <th>Min</th>
+                <th>Max</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for b in breaches %}
+            <tr>
+                <td>{{ b.end_date }}</td>
+                <td>{{ b.layer }}</td>
+                <td>{{ b.factor or "" }}</td>
+                <td>{{ b.window }}</td>
+                <td class="value">{{ "%.10g" | format(b.value) }}</td>
+                <td class="value">{{ "%.10g" | format(b.threshold_min) if b.threshold_min is not none else "" }}</td>
+                <td class="value">{{ "%.10g" | format(b.threshold_max) if b.threshold_max is not none else "" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No breaches detected.</p>
+    {% endif %}
+</body>
+</html>

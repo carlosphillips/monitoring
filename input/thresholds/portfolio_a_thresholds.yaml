@@ -1,0 +1,108 @@
+layers:
+- benchmark
+- structural
+- tactical
+thresholds:
+  tactical:
+    market:
+      daily:
+        min: -0.005
+        max: 0.005
+      monthly:
+        min: -0.015
+        max: 0.015
+      quarterly:
+        min: -0.025
+        max: 0.025
+      annual:
+        min: -0.04
+        max: 0.04
+      3-year:
+        min: -0.08
+        max: 0.08
+    HML:
+      daily:
+        min: -0.005
+        max: 0.005
+      monthly:
+        min: -0.015
+        max: 0.015
+      quarterly:
+        min: -0.025
+        max: 0.025
+      annual:
+        min: -0.04
+        max: 0.04
+      3-year:
+        min: -0.08
+        max: 0.08
+    SMB:
+      daily:
+        min: -0.005
+        max: 0.005
+      monthly:
+        min: -0.015
+        max: 0.015
+      quarterly:
+        min: -0.025
+        max: 0.025
+      annual:
+        min: -0.04
+        max: 0.04
+      3-year:
+        min: -0.08
+        max: 0.08
+    momentum:
+      daily:
+        min: -0.005
+        max: 0.005
+      monthly:
+        min: -0.015
+        max: 0.015
+      quarterly:
+        min: -0.025
+        max: 0.025
+      annual:
+        min: -0.04
+        max: 0.04
+      3-year:
+        min: -0.08
+        max: 0.08
+    quality:
+      daily:
+        min: -0.005
+        max: 0.005
+      monthly:
+        min: -0.015
+        max: 0.015
+      quarterly:
+        min: -0.025
+        max: 0.025
+      annual:
+        min: -0.04
+        max: 0.04
+      3-year:
+        min: -0.08
+        max: 0.08
+  structural:
+    market:
+      annual:
+        min: -0.06
+        max: 0.06
+      3-year:
+        min: -0.12
+        max: 0.12
+    HML:
+      annual:
+        min: -0.06
+        max: 0.06
+      3-year:
+        min: -0.12
+        max: 0.12
+  residual:
+    annual:
+      min: -0.001
+      max: 0.001
+    3-year:
+      min: -0.002
+      max: 0.002
