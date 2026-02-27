@@ -126,6 +126,27 @@ class TestBuildBreachRow:
         row = build_breach_row(date(2024, 1, 15), contrib, config, "daily")
         assert row["tactical_market"] is None
 
+    def test_residual_lower_breach(self):
+        contrib = _make_contributions(residual=-0.005)
+        config = _make_config({
+            ("residual", None, "daily"): ThresholdBounds(min=-0.001, max=0.001),
+        })
+
+        row = build_breach_row(date(2024, 1, 15), contrib, config, "daily")
+        assert row["residual"] == "lower"
+
+
+class TestBuildAttributionRowEdgeCases:
+    def test_empty_exposures_slice(self):
+        contrib = Contributions(layer_factor={}, residual=0.001, total_return=0.001)
+        row = build_attribution_row(date(2024, 1, 15), contrib, {})
+
+        assert row["end_date"] == date(2024, 1, 15)
+        assert row["residual"] == 0.001
+        assert row["total_return"] == 0.001
+        # No layer_factor or avg_exposure keys
+        assert len(row) == 3
+
 
 class TestWrite:
     PAIRS = [
@@ -231,3 +252,27 @@ class TestWrite:
         nested = tmp_path / "a" / "b" / "c"
         write({}, {}, nested, self.PAIRS)
         assert nested.exists()
+
+    def test_attribution_values_round_trip(self, tmp_path):
+        contrib = _make_contributions()
+        exposures = _make_exposures_slice()
+        attr_rows = {"daily": [
+            build_attribution_row(date(2024, 1, 2), contrib, exposures),
+        ]}
+        breach_rows = {"daily": [
+            build_breach_row(date(2024, 1, 2), contrib, _make_config({
+                ("tactical", "market", "daily"): ThresholdBounds(min=-0.001, max=0.001),
+            }), "daily"),
+        ]}
+
+        write(attr_rows, breach_rows, tmp_path, self.PAIRS)
+
+        attr_df = pd.read_parquet(tmp_path / "daily_attribution.parquet")
+        assert attr_df["benchmark_HML"].iloc[0] == pytest.approx(0.001)
+        assert attr_df["residual"].iloc[0] == pytest.approx(0.0005)
+        assert attr_df["total_return"].iloc[0] == pytest.approx(0.0055)
+        assert attr_df["benchmark_HML_avg_exposure"].iloc[0] == pytest.approx(0.2)
+
+        breach_df = pd.read_parquet(tmp_path / "daily_breach.parquet")
+        assert breach_df["tactical_market"].iloc[0] == "upper"
+        assert breach_df["benchmark_HML"].iloc[0] is None

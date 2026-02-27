@@ -101,6 +101,14 @@ class TestCLI:
         assert (output_dir / "alpha" / "report.html").exists()
         assert (output_dir / "beta" / "breaches.csv").exists()
 
+        # Parquet attribution and breach files
+        for portfolio in ["alpha", "beta"]:
+            attr_dir = output_dir / portfolio / "attributions"
+            assert attr_dir.exists()
+            for window in ["daily", "monthly", "quarterly", "annual", "3-year"]:
+                assert (attr_dir / f"{window}_attribution.parquet").exists()
+                assert (attr_dir / f"{window}_breach.parquet").exists()
+
     def test_summary_counts_match_breaches(self, e2e_input, tmp_path):
         """Summary breach counts must match the actual breaches in per-portfolio CSVs."""
         output_dir = tmp_path / "output"

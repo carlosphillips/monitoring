@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from pathlib import Path
 
@@ -9,8 +10,10 @@ import numpy as np
 import pandas as pd
 
 from monitor.carino import Contributions
-from monitor.thresholds import ThresholdConfig
+from monitor.thresholds import ThresholdBounds, ThresholdConfig
 from monitor.windows import WINDOWS
+
+logger = logging.getLogger(__name__)
 
 WINDOW_NAMES = [w.name for w in WINDOWS]
 
@@ -56,9 +59,12 @@ def build_breach_row(
 
 def _breach_direction(
     value: float,
-    bounds: object | None,
+    bounds: ThresholdBounds | None,
 ) -> str | None:
-    """Return 'upper', 'lower', or None for a value against optional bounds."""
+    """Return 'upper', 'lower', or None for a value against optional bounds.
+
+    Mirrors breach._is_breach but returns direction string instead of bool.
+    """
     if bounds is None:
         return None
     if bounds.max is not None and value > bounds.max:
@@ -97,6 +103,8 @@ def write(
             attr_rows, attribution_cols, output_dir / f"{window_name}_attribution.parquet"
         )
         _write_parquet(br_rows, breach_cols, output_dir / f"{window_name}_breach.parquet")
+
+    logger.info("Wrote %d parquet files to %s", len(WINDOW_NAMES) * 2, output_dir)
 
 
 def _write_parquet(rows: list[dict], columns: list[str], path: Path) -> None:
