@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from monitor import DataError, carino, reports
+from monitor import DataError, carino, parquet_output, reports
 from monitor import breach as breach_mod
 from monitor import data as data_mod
 from monitor import portfolios as portfolios_mod
@@ -75,6 +75,8 @@ def main(input_dir: Path, thresholds_dir: Path | None, output_dir: Path) -> None
             logger.info("  %d dates, %d exposure pairs", n_dates, len(exp_data.exposures))
 
             breaches: list[breach_mod.Breach] = []
+            attribution_rows: dict[str, list[dict]] = {w.name: [] for w in WINDOWS}
+            breach_rows: dict[str, list[dict]] = {w.name: [] for w in WINDOWS}
 
             for end_date in exp_data.dates:
                 for window_def in WINDOWS:
@@ -99,8 +101,27 @@ def main(input_dir: Path, thresholds_dir: Path | None, output_dir: Path) -> None
                         breach_mod.detect(contributions, config, ws.end_date, window_def.name)
                     )
 
+                    attribution_rows[window_def.name].append(
+                        parquet_output.build_attribution_row(
+                            ws.end_date, contributions, exposures_slice
+                        )
+                    )
+                    breach_rows[window_def.name].append(
+                        parquet_output.build_breach_row(
+                            ws.end_date, contributions, config, window_def.name
+                        )
+                    )
+
             results[portfolio.name] = breaches
             logger.info("  %d breaches found", len(breaches))
+
+            layer_factor_pairs = sorted(exp_data.exposures.keys())
+            parquet_output.write(
+                attribution_rows,
+                breach_rows,
+                output_dir / portfolio.name / "attributions",
+                layer_factor_pairs,
+            )
 
         except DataError as e:
             logger.error("  Error processing %s: %s", portfolio.name, e)
