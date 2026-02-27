@@ -15,20 +15,22 @@ The monitor does **not** decompose portfolio returns into layers — exposures a
 
 ### Portfolio Discovery
 
-Each portfolio lives in its own subdirectory (the directory name is the portfolio identifier). A single global factor returns file sits alongside them:
+Portfolios and thresholds live in separate directories. A single global factor returns file sits at the input root:
 
 ```
-portfolios/
+input/
 ├── factor_returns.csv       # Shared across all portfolios
-├── portfolio_a/
-│   ├── exposures.csv
-│   └── thresholds.yaml
-├── portfolio_b/
-│   ├── exposures.csv
-│   └── thresholds.yaml
+├── portfolios/
+│   ├── portfolio_a/
+│   │   └── exposures.csv
+│   └── portfolio_b/
+│       └── exposures.csv
+└── thresholds/
+    ├── portfolio_a_thresholds.yaml
+    └── portfolio_b_thresholds.yaml
 ```
 
-The CLI accepts a root directory and discovers all portfolios within it, or accepts explicit paths to individual portfolio directories. The directory name is used as the portfolio identifier in all reports and logs.
+The CLI accepts an input root directory (`--input`, default `./input`). It discovers portfolios by scanning subdirectories under `portfolios/` and matches each to its threshold file in `thresholds/` by name (`{portfolio_name}_thresholds.yaml`). The thresholds directory is configurable via `--thresholds` (default `{input}/thresholds`). The portfolio subdirectory name is used as the portfolio identifier in all reports and logs.
 
 ### factor_returns.csv (shared, factor-scoped)
 
@@ -52,7 +54,7 @@ date, portfolio_return, benchmark_market, benchmark_HML, tactical_market, tactic
 
 ### Layers & Factors
 
-Layer names are declared as a registry in each portfolio's `thresholds.yaml` (under a `layers:` key). Column names in `exposures.csv` are parsed by matching the prefix against this registry — the remainder after the first matching layer prefix + `_` is the factor name. Factor names may contain underscores; layer names may not.
+Layer names are declared as a registry in each portfolio's threshold config (`{portfolio_name}_thresholds.yaml`, under a `layers:` key). Column names in `exposures.csv` are parsed by matching the prefix against this registry — the remainder after the first matching layer prefix + `_` is the factor name. Factor names may contain underscores; layer names may not.
 
 **Residual** is a special layer with no factor breakdown. It is computed by the system as:
 
@@ -60,7 +62,7 @@ Layer names are declared as a registry in each portfolio's `thresholds.yaml` (un
 residual_t = portfolio_return_t - sum over all (layer, factor) of (exposure_{l,f,t} × factor_return_{f,t})
 ```
 
-It is monitored as a single scalar per date and can have its own thresholds in `thresholds.yaml`.
+It is monitored as a single scalar per date and can have its own thresholds in the portfolio's threshold config.
 
 ### Threshold Config (YAML)
 
@@ -109,8 +111,8 @@ Because the system evaluates every date in the full history, each date gets its 
 - **Pre-computed exposures as inputs:** The system monitors, not computes. Factor decomposition is out of scope.
 - **Wide CSV format:** `date` + `{layer}_{factor}` columns. One row per date.
 - **YAML for thresholds:** Human-editable, version-controllable, easy to understand.
-- **UV-managed Python package:** `uv run monitor [--input <dir>] [--output <dir>]` as the CLI entry point. `--input` defaults to `./input`; `--output` defaults to `./output`.
-- **Per-portfolio config:** Each portfolio has its own `thresholds.yaml`. No shared/global threshold config.
+- **UV-managed Python package:** `uv run monitor [--input <dir>] [--thresholds <dir>] [--output <dir>]` as the CLI entry point. `--input` defaults to `./input`; `--thresholds` defaults to `{input}/thresholds`; `--output` defaults to `./output`.
+- **Separate thresholds directory:** Threshold configs live in their own directory (`thresholds/`), one file per portfolio named `{portfolio_name}_thresholds.yaml`. No shared/global threshold config.
 - **Output format:** Each run produces both HTML and CSV reports. HTML is for human review; CSV is for downstream tooling. Layout under `--output`:
   ```
   output/
