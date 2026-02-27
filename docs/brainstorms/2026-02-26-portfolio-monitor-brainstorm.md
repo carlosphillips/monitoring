@@ -170,10 +170,6 @@ monitoring/
 - **Evaluation scope:** Full history — evaluate every date in the CSV and produce a breach history, not just a single latest-date snapshot.
 - **Window metric (Carino-linked contribution to return):** The monitored value for each `layer × factor × window` cell is the Carino-linked contribution to return over the trailing window.
 
-  **The problem:** Simply summing daily contributions `c_{l,f,t} = e_{l,f,t} × r_{f,t}` over a multi-day window doesn't equal the geometric portfolio return for the window, because compounding means early-period contributions "earn" growth on subsequent days. Carino linking corrects for this so that contributions sum exactly to the total portfolio return over any window.
-
-  **The intuition:** Each day's contribution is rescaled by how much of the window's total log-return fell on that day. A day where the portfolio moved a lot gets a larger weight; a day where it barely moved gets a smaller one. The log-transform is what makes the rescaling exact under geometric compounding.
-
   **The formula:** For a window with daily portfolio returns `r_{p,t}` and geometric total return `R_p = ∏(1 + r_{p,t}) − 1`:
 
   ```
