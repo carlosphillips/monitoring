@@ -177,7 +177,7 @@ The following gaps were identified during specification analysis and resolved wi
 **Goal**: Working filter bar and Detail DataTable showing filtered breach records.
 
 **Tasks:**
-- [ ] Create `src/monitor/dashboard/layout.py`:
+- [x] Create `src/monitor/dashboard/layout.py`:
   - Filter bar with Dash Bootstrap `dbc.Row`/`dbc.Col`:
     - Multi-select dropdowns for Portfolio, Layer, Factor, Window, Direction (using `dcc.Dropdown(multi=True)`)
     - Date range picker (`dcc.DatePickerRange`)
@@ -186,12 +186,12 @@ The following gaps were identified during specification analysis and resolved wi
     - Columns: end_date, portfolio, layer, factor, window, direction, value, threshold_min, threshold_max, distance, abs_value, avg_exposure, contribution
     - Sorting, filtering (native), pagination (25 rows/page)
     - Conditional row styling: blue tint for upper, red tint for lower breaches
-- [ ] Create `src/monitor/dashboard/callbacks.py`:
+- [x] Create `src/monitor/dashboard/callbacks.py`:
   - Filter callback: reads all filter inputs, queries DuckDB with WHERE clauses, updates Detail DataTable
   - Populate filter dropdown options from unfiltered data (only values with breaches)
   - Handle Factor `"(no factor)"` for residual breaches
   - Handle empty multi-selects as "no filter" (show all)
-- [ ] Create `tests/test_dashboard/test_callbacks.py` -- test filter logic, empty states, residual factor handling
+- [x] Create `tests/test_dashboard/test_callbacks.py` -- test filter logic, empty states, residual factor handling
 
 **Files:**
 - `src/monitor/dashboard/layout.py` (new)
@@ -207,7 +207,7 @@ The following gaps were identified during specification analysis and resolved wi
 **Goal**: Flat (no hierarchy) stacked bar chart showing breach counts over time, with auto-bucketing.
 
 **Tasks:**
-- [ ] Create `src/monitor/dashboard/pivot.py`:
+- [x] Create `src/monitor/dashboard/pivot.py`:
   - `build_timeline_figure(df, time_bucket, row_groups=None) -> go.Figure` -- build Plotly stacked bar chart
     - Red bars (lower breaches) stacked below blue bars (upper breaches)
     - X-axis: time buckets, Y-axis: breach count
@@ -216,9 +216,9 @@ The following gaps were identified during specification analysis and resolved wi
     - DuckDB `DATE_TRUNC` or `DATE_PART` for bucketing
     - Week start = Monday (ISO)
   - Granularity override dropdown (Daily, Weekly, Monthly, Quarterly, Yearly)
-- [ ] Update `layout.py`: add Pivot View area above Detail View with `dcc.Graph` and time granularity dropdown
-- [ ] Update `callbacks.py`: callback to rebuild Pivot chart when filters or granularity change
-- [ ] Create `tests/test_dashboard/test_pivot.py` -- test time bucketing, bar chart data generation
+- [x] Update `layout.py`: add Pivot View area above Detail View with `dcc.Graph` and time granularity dropdown
+- [x] Update `callbacks.py`: callback to rebuild Pivot chart when filters or granularity change
+- [x] Create `tests/test_dashboard/test_pivot.py` -- test time bucketing, bar chart data generation
 
 **Files:**
 - `src/monitor/dashboard/pivot.py` (new)

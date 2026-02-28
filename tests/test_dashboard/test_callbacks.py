@@ -1,0 +1,206 @@
+"""Tests for dashboard callbacks: filter logic, empty states, residual factor handling."""
+
+from __future__ import annotations
+
+from monitor.dashboard.callbacks import _build_where_clause
+from monitor.dashboard.constants import NO_FACTOR_LABEL
+from monitor.dashboard.data import load_breaches
+
+
+class TestBuildWhereClause:
+    """Tests for _build_where_clause()."""
+
+    def test_empty_filters_no_where(self):
+        sql, params = _build_where_clause(None, None, None, None, None, None, None, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_empty_lists_no_where(self):
+        sql, params = _build_where_clause([], [], [], [], [], None, None, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_single_portfolio(self):
+        sql, params = _build_where_clause(
+            ["portfolio_a"], None, None, None, None, None, None, None, None
+        )
+        assert "portfolio IN (?)" in sql
+        assert params == ["portfolio_a"]
+
+    def test_multiple_portfolios(self):
+        sql, params = _build_where_clause(
+            ["portfolio_a", "portfolio_b"], None, None, None, None, None, None, None, None
+        )
+        assert "portfolio IN (?, ?)" in sql
+        assert params == ["portfolio_a", "portfolio_b"]
+
+    def test_layer_filter(self):
+        sql, params = _build_where_clause(
+            None, ["structural", "tactical"], None, None, None, None, None, None, None
+        )
+        assert "layer IN (?, ?)" in sql
+        assert params == ["structural", "tactical"]
+
+    def test_factor_with_no_factor_label(self):
+        sql, params = _build_where_clause(
+            None, None, [NO_FACTOR_LABEL], None, None, None, None, None, None
+        )
+        assert "factor IS NULL OR factor = ''" in sql
+        assert params == []
+
+    def test_factor_with_real_and_no_factor(self):
+        sql, params = _build_where_clause(
+            None, None, ["market", NO_FACTOR_LABEL], None, None, None, None, None, None
+        )
+        assert "factor IN (?)" in sql
+        assert "factor IS NULL OR factor = ''" in sql
+        assert params == ["market"]
+
+    def test_factor_real_only(self):
+        sql, params = _build_where_clause(
+            None, None, ["market", "HML"], None, None, None, None, None, None
+        )
+        assert "factor IN (?, ?)" in sql
+        assert NO_FACTOR_LABEL not in sql
+        assert params == ["market", "HML"]
+
+    def test_window_filter(self):
+        sql, params = _build_where_clause(
+            None, None, None, ["daily"], None, None, None, None, None
+        )
+        assert '"window" IN (?)' in sql
+        assert params == ["daily"]
+
+    def test_direction_filter(self):
+        sql, params = _build_where_clause(
+            None, None, None, None, ["upper"], None, None, None, None
+        )
+        assert "direction IN (?)" in sql
+        assert params == ["upper"]
+
+    def test_date_range(self):
+        sql, params = _build_where_clause(
+            None, None, None, None, None, "2024-01-01", "2024-03-31", None, None
+        )
+        assert "end_date >= ?" in sql
+        assert "end_date <= ?" in sql
+        assert params == ["2024-01-01", "2024-03-31"]
+
+    def test_abs_value_range(self):
+        sql, params = _build_where_clause(
+            None, None, None, None, None, None, None, [0.001, 0.01], None
+        )
+        assert "abs_value >= ? AND abs_value <= ?" in sql
+        assert params == [0.001, 0.01]
+
+    def test_distance_range(self):
+        sql, params = _build_where_clause(
+            None, None, None, None, None, None, None, None, [0.0, 0.005]
+        )
+        assert "distance >= ? AND distance <= ?" in sql
+        assert params == [0.0, 0.005]
+
+    def test_combined_filters(self):
+        sql, params = _build_where_clause(
+            ["portfolio_a"],
+            ["structural"],
+            ["market"],
+            ["daily"],
+            ["upper"],
+            "2024-01-01",
+            "2024-01-31",
+            [0.001, 0.01],
+            [0.0, 0.005],
+        )
+        assert sql.startswith("WHERE ")
+        assert "portfolio IN (?)" in sql
+        assert "layer IN (?)" in sql
+        assert "factor IN (?)" in sql
+        assert '"window" IN (?)' in sql
+        assert "direction IN (?)" in sql
+        assert "end_date >= ?" in sql
+        assert "end_date <= ?" in sql
+        assert "abs_value >= ?" in sql
+        assert "distance >= ?" in sql
+        assert len(params) == 11
+
+
+class TestFilterWithDuckDB:
+    """Integration tests: run _build_where_clause against real DuckDB data."""
+
+    def test_filter_by_portfolio(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            ["portfolio_a"], None, None, None, None, None, None, None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        assert count == 5  # portfolio_a has 5 breaches
+
+    def test_filter_by_direction(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            None, None, None, None, ["upper"], None, None, None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        # Upper: portfolio_a rows 0,4 + portfolio_b row 0 = 3
+        assert count == 3
+
+    def test_filter_no_factor_label(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            None, None, [NO_FACTOR_LABEL], None, None, None, None, None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        assert count == 1  # Only the residual breach
+
+    def test_filter_date_range(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            None, None, None, None, None, "2024-01-03", "2024-01-05", None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        # Jan 3: 2 breaches (portfolio_a), Jan 4: 1 (portfolio_a), Jan 5: 1 (portfolio_b)
+        assert count == 4
+
+    def test_empty_filter_returns_all(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            None, None, None, None, None, None, None, None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        assert count == 7
+
+    def test_zero_match_filter(self, sample_output):
+        conn = load_breaches(sample_output)
+        where_sql, params = _build_where_clause(
+            ["nonexistent_portfolio"], None, None, None, None, None, None, None, None
+        )
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        assert count == 0
+
+
+class TestCallbacksIntegration:
+    """Test callbacks using the Dash test client."""
+
+    def test_app_creates_with_layout(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        # Layout should contain the filter dropdowns
+        layout_str = str(app.layout)
+        assert "filter-portfolio" in layout_str
+        assert "filter-layer" in layout_str
+        assert "detail-table" in layout_str
+        assert "pivot-timeline-chart" in layout_str
