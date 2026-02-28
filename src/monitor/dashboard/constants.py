@@ -16,9 +16,6 @@ GROUPABLE_DIMENSIONS: tuple[str, ...] = (PORTFOLIO, LAYER, FACTOR, WINDOW, DIREC
 # Dimensions usable as column axis
 COLUMN_AXIS_DIMENSIONS: tuple[str, ...] = (TIME, PORTFOLIO, LAYER, FACTOR, WINDOW)
 
-# All filter dimensions
-FILTER_DIMENSIONS: tuple[str, ...] = (PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION)
-
 # Color scheme: lower = red, upper = blue
 COLOR_LOWER = "#d62728"
 COLOR_UPPER = "#1f77b4"
@@ -42,6 +39,9 @@ TIME_GRANULARITIES: tuple[str, ...] = ("Daily", "Weekly", "Monthly", "Quarterly"
 
 # Maximum number of row hierarchy levels
 MAX_HIERARCHY_LEVELS = 3
+
+# Maximum number of pivot groups (leaf nodes in tree or category columns)
+MAX_PIVOT_GROUPS = 50
 
 # Display labels for dimension names
 DIMENSION_LABELS: dict[str, str] = {

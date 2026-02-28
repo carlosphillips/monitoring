@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import duckdb
@@ -39,6 +40,8 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
     union_parts = []
     for csv_path in csv_files:
         portfolio_name = csv_path.parent.name
+        if not re.match(r'^[\w\-. ]+$', portfolio_name):
+            raise ValueError(f"Invalid portfolio directory name: {portfolio_name!r}")
         union_parts.append(
             f"SELECT *, '{portfolio_name}' AS portfolio "
             f"FROM read_csv_auto('{csv_path}', types={{"
@@ -111,6 +114,10 @@ def query_attributions(
     reads the appropriate parquet file and extracts contribution and avg_exposure.
 
     Returns a DataFrame with columns: end_date, contribution, avg_exposure.
+
+    Thread safety: this function is NOT thread-safe. The caller MUST
+    serialize access to ``conn`` (e.g. via ``callbacks._db_lock``) when
+    using a shared DuckDB connection.
     """
     empty_result = pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
 

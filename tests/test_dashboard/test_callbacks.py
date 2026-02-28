@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from monitor.dashboard.callbacks import (
-    _build_selection_where,
-    _build_where_clause,
-    _get_available_dimensions,
-    _get_column_axis_options,
+import pytest
+
+from monitor.dashboard.callbacks import _get_available_dimensions, _get_column_axis_options
+from monitor.dashboard.query_builder import (
+    build_selection_where,
+    build_where_clause,
+    validate_sql_dimensions,
 )
 from monitor.dashboard.constants import (
     COLUMN_AXIS_DIMENSIONS,
@@ -18,48 +20,48 @@ from monitor.dashboard.data import load_breaches
 
 
 class TestBuildWhereClause:
-    """Tests for _build_where_clause()."""
+    """Tests for build_where_clause()."""
 
     def test_empty_filters_no_where(self):
-        sql, params = _build_where_clause(None, None, None, None, None, None, None, None, None)
+        sql, params = build_where_clause(None, None, None, None, None, None, None, None, None)
         assert sql == ""
         assert params == []
 
     def test_empty_lists_no_where(self):
-        sql, params = _build_where_clause([], [], [], [], [], None, None, None, None)
+        sql, params = build_where_clause([], [], [], [], [], None, None, None, None)
         assert sql == ""
         assert params == []
 
     def test_single_portfolio(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             ["portfolio_a"], None, None, None, None, None, None, None, None
         )
         assert "portfolio IN (?)" in sql
         assert params == ["portfolio_a"]
 
     def test_multiple_portfolios(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             ["portfolio_a", "portfolio_b"], None, None, None, None, None, None, None, None
         )
         assert "portfolio IN (?, ?)" in sql
         assert params == ["portfolio_a", "portfolio_b"]
 
     def test_layer_filter(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, ["structural", "tactical"], None, None, None, None, None, None, None
         )
         assert "layer IN (?, ?)" in sql
         assert params == ["structural", "tactical"]
 
     def test_factor_with_no_factor_label(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, [NO_FACTOR_LABEL], None, None, None, None, None, None
         )
         assert "factor IS NULL OR factor = ''" in sql
         assert params == []
 
     def test_factor_with_real_and_no_factor(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, ["market", NO_FACTOR_LABEL], None, None, None, None, None, None
         )
         assert "factor IN (?)" in sql
@@ -67,7 +69,7 @@ class TestBuildWhereClause:
         assert params == ["market"]
 
     def test_factor_real_only(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, ["market", "HML"], None, None, None, None, None, None
         )
         assert "factor IN (?, ?)" in sql
@@ -75,17 +77,17 @@ class TestBuildWhereClause:
         assert params == ["market", "HML"]
 
     def test_window_filter(self):
-        sql, params = _build_where_clause(None, None, None, ["daily"], None, None, None, None, None)
+        sql, params = build_where_clause(None, None, None, ["daily"], None, None, None, None, None)
         assert '"window" IN (?)' in sql
         assert params == ["daily"]
 
     def test_direction_filter(self):
-        sql, params = _build_where_clause(None, None, None, None, ["upper"], None, None, None, None)
+        sql, params = build_where_clause(None, None, None, None, ["upper"], None, None, None, None)
         assert "direction IN (?)" in sql
         assert params == ["upper"]
 
     def test_date_range(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, None, None, None, "2024-01-01", "2024-03-31", None, None
         )
         assert "end_date >= ?" in sql
@@ -93,21 +95,21 @@ class TestBuildWhereClause:
         assert params == ["2024-01-01", "2024-03-31"]
 
     def test_abs_value_range(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, None, None, None, None, None, [0.001, 0.01], None
         )
         assert "abs_value >= ? AND abs_value <= ?" in sql
         assert params == [0.001, 0.01]
 
     def test_distance_range(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             None, None, None, None, None, None, None, None, [0.0, 0.005]
         )
         assert "distance >= ? AND distance <= ?" in sql
         assert params == [0.0, 0.005]
 
     def test_combined_filters(self):
-        sql, params = _build_where_clause(
+        sql, params = build_where_clause(
             ["portfolio_a"],
             ["structural"],
             ["market"],
@@ -132,11 +134,11 @@ class TestBuildWhereClause:
 
 
 class TestFilterWithDuckDB:
-    """Integration tests: run _build_where_clause against real DuckDB data."""
+    """Integration tests: run build_where_clause against real DuckDB data."""
 
     def test_filter_by_portfolio(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             ["portfolio_a"], None, None, None, None, None, None, None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -144,7 +146,7 @@ class TestFilterWithDuckDB:
 
     def test_filter_by_direction(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             None, None, None, None, ["upper"], None, None, None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -153,7 +155,7 @@ class TestFilterWithDuckDB:
 
     def test_filter_no_factor_label(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             None, None, [NO_FACTOR_LABEL], None, None, None, None, None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -161,7 +163,7 @@ class TestFilterWithDuckDB:
 
     def test_filter_date_range(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             None, None, None, None, None, "2024-01-03", "2024-01-05", None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -170,7 +172,7 @@ class TestFilterWithDuckDB:
 
     def test_empty_filter_returns_all(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             None, None, None, None, None, None, None, None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -178,7 +180,7 @@ class TestFilterWithDuckDB:
 
     def test_zero_match_filter(self, sample_output):
         conn = load_breaches(sample_output)
-        where_sql, params = _build_where_clause(
+        where_sql, params = build_where_clause(
             ["nonexistent_portfolio"], None, None, None, None, None, None, None, None
         )
         count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
@@ -268,10 +270,10 @@ class TestGetColumnAxisOptions:
 
 
 class TestBuildSelectionWhere:
-    """Tests for _build_selection_where() -- pivot selection filtering."""
+    """Tests for build_selection_where() -- pivot selection filtering."""
 
     def test_no_selection(self):
-        sql, params = _build_selection_where(None, None, None)
+        sql, params = build_selection_where(None, None, None)
         assert sql == ""
         assert params == []
 
@@ -281,7 +283,7 @@ class TestBuildSelectionWhere:
             "time_bucket": "2024-01-01",
             "direction": "lower",
         }
-        sql, params = _build_selection_where(selection, "Daily", TIME)
+        sql, params = build_selection_where(selection, "Daily", TIME)
         assert "DATE_TRUNC" in sql
         assert "direction = ?" in sql
         assert "2024-01-01" in params
@@ -294,7 +296,7 @@ class TestBuildSelectionWhere:
             "column_value": "portfolio_a",
             "group_key": "__flat__",
         }
-        sql, params = _build_selection_where(selection, None, "portfolio")
+        sql, params = build_selection_where(selection, None, "portfolio")
         assert '"portfolio" = ?' in sql
         assert params == ["portfolio_a"]
 
@@ -305,7 +307,7 @@ class TestBuildSelectionWhere:
             "column_value": "portfolio_a",
             "group_key": "layer=structural",
         }
-        sql, params = _build_selection_where(selection, None, "portfolio")
+        sql, params = build_selection_where(selection, None, "portfolio")
         assert '"portfolio" = ?' in sql
         assert '"layer" = ?' in sql
         assert "portfolio_a" in params
@@ -318,14 +320,92 @@ class TestBuildSelectionWhere:
             "column_value": NO_FACTOR_LABEL,
             "group_key": "__flat__",
         }
-        sql, params = _build_selection_where(selection, None, "factor")
+        sql, params = build_selection_where(selection, None, "factor")
         assert "factor IS NULL OR factor = ''" in sql
         assert params == []
 
     def test_empty_selection_dict(self):
-        sql, params = _build_selection_where({}, None, None)
+        sql, params = build_selection_where({}, None, None)
         assert sql == ""
         assert params == []
+
+
+class TestValidateSqlDimensions:
+    """Tests for validate_sql_dimensions() -- SQL injection prevention."""
+
+    def test_valid_hierarchy(self):
+        validate_sql_dimensions(["portfolio", "layer"], "end_date")
+
+    def test_valid_empty_hierarchy(self):
+        validate_sql_dimensions([], "end_date")
+
+    def test_valid_none_hierarchy(self):
+        validate_sql_dimensions(None, "portfolio")
+
+    def test_invalid_hierarchy_dimension(self):
+        with pytest.raises(ValueError, match="Invalid hierarchy dimension"):
+            validate_sql_dimensions(["portfolio", "'; DROP TABLE breaches; --"], "end_date")
+
+    def test_hierarchy_with_double_quote(self):
+        with pytest.raises(ValueError, match="Invalid hierarchy dimension"):
+            validate_sql_dimensions(['" FROM breaches; --'], "end_date")
+
+    def test_invalid_column_axis(self):
+        with pytest.raises(ValueError, match="Invalid column axis"):
+            validate_sql_dimensions([], "'; DROP TABLE breaches; --")
+
+    def test_column_axis_with_double_quote(self):
+        with pytest.raises(ValueError, match="Invalid column axis"):
+            validate_sql_dimensions([], '" FROM breaches; --')
+
+    def test_all_groupable_dimensions_valid(self):
+        for dim in GROUPABLE_DIMENSIONS:
+            validate_sql_dimensions([dim], "end_date")
+
+    def test_all_column_axis_dimensions_valid(self):
+        for dim in COLUMN_AXIS_DIMENSIONS:
+            validate_sql_dimensions([], dim)
+
+
+class TestBuildSelectionWhereSecurity:
+    """Tests for SQL injection prevention in build_selection_where()."""
+
+    def test_invalid_col_dim_returns_empty(self):
+        selection = {
+            "type": "category",
+            "column_dim": '"; DROP TABLE breaches; --',
+            "column_value": "x",
+            "group_key": "__flat__",
+        }
+        sql, params = build_selection_where(selection, None, "portfolio")
+        assert sql == ""
+        assert params == []
+
+    def test_invalid_group_key_dim_skipped(self):
+        selection = {
+            "type": "category",
+            "column_dim": "portfolio",
+            "column_value": "portfolio_a",
+            "group_key": '"; DROP TABLE breaches; --=value',
+        }
+        sql, params = build_selection_where(selection, None, "portfolio")
+        # The invalid dim from group_key should be skipped
+        assert '"portfolio" = ?' in sql
+        assert "DROP" not in sql
+        assert params == ["portfolio_a"]
+
+    def test_valid_group_key_dim_accepted(self):
+        selection = {
+            "type": "category",
+            "column_dim": "portfolio",
+            "column_value": "portfolio_a",
+            "group_key": "layer=structural|window=daily",
+        }
+        sql, params = build_selection_where(selection, None, "portfolio")
+        assert '"layer" = ?' in sql
+        assert '"window" = ?' in sql
+        assert "structural" in params
+        assert "daily" in params
 
 
 class TestCallbacksIntegration:

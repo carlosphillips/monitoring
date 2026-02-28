@@ -6,12 +6,12 @@ from dash import html
 
 from monitor.dashboard.pivot import (
     _aggregate_category_cells,
-    _build_category_tree,
-    _build_group_tree,
     _build_split_cell,
+    _build_tree,
     _format_group_value,
-    _granularity_to_trunc,
+    granularity_to_trunc,
     _render_category_html_table,
+    _render_tree,
     auto_granularity,
     build_category_table,
     build_hierarchical_pivot,
@@ -47,25 +47,25 @@ class TestAutoGranularity:
 
 
 class TestGranularityToTrunc:
-    """Tests for _granularity_to_trunc()."""
+    """Tests for granularity_to_trunc()."""
 
     def test_daily(self):
-        assert _granularity_to_trunc("Daily") == "day"
+        assert granularity_to_trunc("Daily") == "day"
 
     def test_weekly(self):
-        assert _granularity_to_trunc("Weekly") == "week"
+        assert granularity_to_trunc("Weekly") == "week"
 
     def test_monthly(self):
-        assert _granularity_to_trunc("Monthly") == "month"
+        assert granularity_to_trunc("Monthly") == "month"
 
     def test_quarterly(self):
-        assert _granularity_to_trunc("Quarterly") == "quarter"
+        assert granularity_to_trunc("Quarterly") == "quarter"
 
     def test_yearly(self):
-        assert _granularity_to_trunc("Yearly") == "year"
+        assert granularity_to_trunc("Yearly") == "year"
 
     def test_unknown_defaults_to_month(self):
-        assert _granularity_to_trunc("Invalid") == "month"
+        assert granularity_to_trunc("Invalid") == "month"
 
 
 class TestBuildTimelineFigure:
@@ -215,8 +215,8 @@ class TestFormatGroupValue:
         assert _format_group_value("layer", "structural") == "structural"
 
 
-class TestBuildGroupTree:
-    """Tests for _build_group_tree()."""
+class TestBuildTree:
+    """Tests for _build_tree()."""
 
     def test_single_level(self):
         rows = [
@@ -224,14 +224,14 @@ class TestBuildGroupTree:
             {"portfolio": "a", "time_bucket": "2024-01", "direction": "upper", "count": 2},
             {"portfolio": "b", "time_bucket": "2024-01", "direction": "lower", "count": 1},
         ]
-        tree = _build_group_tree(rows, ["portfolio"], level=0)
+        tree = _build_tree(rows, ["portfolio"], level=0)
 
         assert "a" in tree
         assert "b" in tree
         assert tree["a"]["count"] == 5
         assert tree["b"]["count"] == 1
-        assert len(tree["a"]["bucket_data"]) == 2
-        assert len(tree["b"]["bucket_data"]) == 1
+        assert len(tree["a"]["leaf_data"]) == 2
+        assert len(tree["b"]["leaf_data"]) == 1
 
     def test_two_levels(self):
         rows = [
@@ -257,7 +257,7 @@ class TestBuildGroupTree:
                 "count": 1,
             },
         ]
-        tree = _build_group_tree(rows, ["portfolio", "layer"], level=0)
+        tree = _build_tree(rows, ["portfolio", "layer"], level=0)
 
         assert "a" in tree
         assert "b" in tree
@@ -287,7 +287,7 @@ class TestBuildGroupTree:
                 "count": 1,
             },
         ]
-        tree = _build_group_tree(rows, ["portfolio", "layer", "factor"], level=0)
+        tree = _build_tree(rows, ["portfolio", "layer", "factor"], level=0)
 
         assert "a" in tree
         structural = tree["a"]["children"]["structural"]
@@ -295,8 +295,8 @@ class TestBuildGroupTree:
         assert "market" in structural["children"]
         assert "HML" in structural["children"]
         assert structural["children"]["market"]["count"] == 3
-        # Leaf level should have bucket_data
-        assert "bucket_data" in structural["children"]["market"]
+        # Leaf level should have leaf_data
+        assert "leaf_data" in structural["children"]["market"]
 
 
 class TestBuildHierarchicalPivot:
@@ -614,20 +614,20 @@ class TestBuildCategoryTable:
 
 
 class TestBuildCategoryTree:
-    """Tests for _build_category_tree()."""
+    """Tests for _build_tree() in category mode."""
 
     def test_single_level(self):
         rows = [
             {"layer": "structural", "portfolio": "a", "direction": "upper", "count": 3},
             {"layer": "tactical", "portfolio": "a", "direction": "lower", "count": 1},
         ]
-        tree = _build_category_tree(rows, ["layer"], "portfolio", level=0)
+        tree = _build_tree(rows, ["layer"], level=0)
         assert "structural" in tree
         assert "tactical" in tree
         assert tree["structural"]["count"] == 3
         assert tree["tactical"]["count"] == 1
-        # Leaf level should have rows
-        assert "rows" in tree["structural"]
+        # Leaf level should have leaf_data
+        assert "leaf_data" in tree["structural"]
 
 
 class TestCategoryIntegration:

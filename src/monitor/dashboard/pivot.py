@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import plotly.graph_objects as go
 from dash import dcc, html
 
@@ -10,6 +12,7 @@ from monitor.dashboard.constants import (
     COLOR_UPPER,
     DAILY_THRESHOLD,
     DIMENSION_LABELS,
+    MAX_PIVOT_GROUPS,
     NO_FACTOR_LABEL,
     WEEKLY_THRESHOLD,
 )
@@ -20,8 +23,6 @@ def auto_granularity(min_date: str, max_date: str) -> str:
 
     < 90 days -> Daily, < 365 days -> Weekly, >= 365 days -> Monthly.
     """
-    from datetime import date
-
     d_min = date.fromisoformat(min_date)
     d_max = date.fromisoformat(max_date)
     span = (d_max - d_min).days
@@ -34,7 +35,7 @@ def auto_granularity(min_date: str, max_date: str) -> str:
         return "Monthly"
 
 
-def _granularity_to_trunc(granularity: str) -> str:
+def granularity_to_trunc(granularity: str) -> str:
     """Map granularity label to DuckDB DATE_TRUNC interval."""
     mapping = {
         "Daily": "day",
@@ -136,11 +137,17 @@ def build_category_table(
         return []
 
     if hierarchy:
-        tree = _build_category_tree(category_data, hierarchy, column_dim, level=0)
+        tree = _build_tree(category_data, hierarchy, level=0)
         col_values = sorted(
             {str(row[column_dim]) for row in category_data if row[column_dim] is not None}
         )
-        return _render_category_tree(tree, hierarchy, column_dim, col_values, level=0)
+
+        def _category_leaf(leaf_data, dim, group_val):
+            cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
+            group_key = f"{dim}={group_val}"
+            return _render_category_html_table(cells, column_dim, col_values, group_key)
+
+        return _render_tree(tree, hierarchy, _category_leaf, level=0)
 
     # Flat (no hierarchy): single category table
     col_values = sorted(
@@ -178,6 +185,16 @@ def _render_category_html_table(
     Background intensity scales with breach count.
     """
     dim_label = DIMENSION_LABELS.get(column_dim, column_dim.title())
+
+    # Cap column values if they exceed the limit
+    total_col_count = len(col_values)
+    truncated_cols = total_col_count > MAX_PIVOT_GROUPS
+    if truncated_cols:
+        col_values = sorted(
+            col_values,
+            key=lambda cv: cells[cv]["upper"] + cells[cv]["lower"],
+            reverse=True,
+        )[:MAX_PIVOT_GROUPS]
 
     # Find max count for intensity scaling
     max_count = max(
@@ -238,8 +255,30 @@ def _render_category_html_table(
             )
         )
 
+    table_children = [html.Thead(html.Tr(header_cells)), html.Tbody(html.Tr(data_cells))]
+
+    if truncated_cols:
+        table_children.append(
+            html.Tfoot(
+                html.Tr(
+                    html.Td(
+                        f"Showing top {MAX_PIVOT_GROUPS} of {total_col_count} "
+                        f"columns (sorted by breach count)",
+                        colSpan=len(col_values) + 1,
+                        style={
+                            "padding": "6px 12px",
+                            "color": "#6c757d",
+                            "fontStyle": "italic",
+                            "fontSize": "13px",
+                            "textAlign": "center",
+                        },
+                    )
+                )
+            )
+        )
+
     return html.Table(
-        [html.Thead(html.Tr(header_cells)), html.Tbody(html.Tr(data_cells))],
+        table_children,
         style={
             "width": "100%",
             "borderCollapse": "collapse",
@@ -250,15 +289,14 @@ def _render_category_html_table(
 
 def _build_split_cell(upper: int, lower: int, intensity: float) -> html.Div:
     """Build a split-color cell: blue top (upper), red bottom (lower)."""
-    upper_alpha = 0.1 + intensity * 0.4
-    lower_alpha = 0.1 + intensity * 0.4
+    alpha = 0.1 + intensity * 0.4
 
     return html.Div(
         [
             html.Div(
                 str(upper) if upper > 0 else "",
                 style={
-                    "backgroundColor": f"rgba(31, 119, 180, {upper_alpha if upper > 0 else 0})",
+                    "backgroundColor": f"rgba(31, 119, 180, {alpha if upper > 0 else 0})",
                     "color": COLOR_UPPER if upper > 0 else "#ccc",
                     "padding": "4px 8px",
                     "fontSize": "13px",
@@ -270,7 +308,7 @@ def _build_split_cell(upper: int, lower: int, intensity: float) -> html.Div:
             html.Div(
                 str(lower) if lower > 0 else "",
                 style={
-                    "backgroundColor": f"rgba(214, 39, 40, {lower_alpha if lower > 0 else 0})",
+                    "backgroundColor": f"rgba(214, 39, 40, {alpha if lower > 0 else 0})",
                     "color": COLOR_LOWER if lower > 0 else "#ccc",
                     "padding": "4px 8px",
                     "fontSize": "13px",
@@ -283,15 +321,21 @@ def _build_split_cell(upper: int, lower: int, intensity: float) -> html.Div:
     )
 
 
-def _build_category_tree(
+def _build_tree(
     rows: list[dict],
     hierarchy: list[str],
-    column_dim: str,
     level: int,
 ) -> dict:
-    """Build a nested dict tree for hierarchical category mode.
+    """Build a nested dict tree from flat grouped data.
 
-    Similar to _build_group_tree but stores category cell data at leaf level.
+    This is a unified builder used by both timeline and category modes.
+
+    Returns:
+        Dict mapping group_value -> {
+            "count": total_breach_count,
+            "leaf_data": list of raw row dicts (only at leaf level),
+            "children": sub-tree dict (only at non-leaf level),
+        }
     """
     dim = hierarchy[level]
     is_leaf = level == len(hierarchy) - 1
@@ -300,10 +344,10 @@ def _build_category_tree(
     for row in rows:
         group_val = str(row[dim]) if row[dim] is not None else ""
         if group_val not in groups:
-            groups[group_val] = {"count": 0, "rows": [], "children_rows": []}
+            groups[group_val] = {"count": 0, "leaf_data": [], "children_rows": []}
         groups[group_val]["count"] += int(row["count"])
         if is_leaf:
-            groups[group_val]["rows"].append(row)
+            groups[group_val]["leaf_data"].append(row)
         else:
             groups[group_val]["children_rows"].append(row)
 
@@ -311,29 +355,48 @@ def _build_category_tree(
     for group_val, data in sorted(groups.items()):
         entry: dict = {"count": data["count"]}
         if is_leaf:
-            entry["rows"] = data["rows"]
+            entry["leaf_data"] = data["leaf_data"]
         else:
-            entry["children"] = _build_category_tree(
-                data["children_rows"], hierarchy, column_dim, level + 1
+            entry["children"] = _build_tree(
+                data["children_rows"], hierarchy, level + 1
             )
         result[group_val] = entry
     return result
 
 
-def _render_category_tree(
+def _render_tree(
     tree: dict,
     hierarchy: list[str],
-    column_dim: str,
-    col_values: list[str],
+    render_leaf_fn: object,
     level: int,
 ) -> list:
-    """Render a hierarchical category tree with expand/collapse."""
+    """Render a tree as nested html.Details components with expand/collapse.
+
+    This is a unified renderer used by both timeline and category modes.
+
+    Args:
+        tree: Nested dict from _build_tree.
+        hierarchy: List of dimension names for grouping.
+        render_leaf_fn: Callable(leaf_data, dim, group_val) -> Dash component
+            to render the leaf content.
+        level: Current depth in the hierarchy (0-based).
+
+    Returns:
+        List of html.Details components.
+    """
     dim = hierarchy[level]
     dim_label = DIMENSION_LABELS.get(dim, dim.title())
     is_leaf = level == len(hierarchy) - 1
 
+    # Sort items by breach count descending and truncate if needed
+    sorted_items = sorted(tree.items(), key=lambda item: item[1]["count"], reverse=True)
+    total_groups = len(sorted_items)
+    truncated = total_groups > MAX_PIVOT_GROUPS
+    if truncated:
+        sorted_items = sorted_items[:MAX_PIVOT_GROUPS]
+
     components = []
-    for group_val, data in tree.items():
+    for group_val, data in sorted_items:
         display_val = _format_group_value(dim, group_val)
         count = data["count"]
 
@@ -356,17 +419,14 @@ def _render_category_tree(
         )
 
         if is_leaf:
-            cells = _aggregate_category_cells(data["rows"], column_dim, col_values)
-            # Use hierarchy path as group key for cell IDs
-            group_key = f"{dim}={group_val}"
-            table = _render_category_html_table(cells, column_dim, col_values, group_key)
+            leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val)
             children = [
                 summary,
-                html.Div(table, style={"paddingLeft": "20px"}),
+                html.Div(leaf_content, style={"paddingLeft": "20px"}),
             ]
         else:
-            sub = _render_category_tree(
-                data["children"], hierarchy, column_dim, col_values, level + 1
+            sub = _render_tree(
+                data["children"], hierarchy, render_leaf_fn, level + 1
             )
             children = [
                 summary,
@@ -374,12 +434,27 @@ def _render_category_tree(
             ]
 
         components.append(html.Details(children, open=False, style={"marginBottom": "4px"}))
+
+    if truncated:
+        components.append(
+            html.Div(
+                f"Showing top {MAX_PIVOT_GROUPS} of {total_groups} groups "
+                f"(sorted by breach count)",
+                style={
+                    "padding": "8px 12px",
+                    "color": "#6c757d",
+                    "fontStyle": "italic",
+                    "fontSize": "13px",
+                },
+            )
+        )
+
     return components
 
 
 def _format_group_value(dimension: str, value: str) -> str:
     """Format a group value for display, handling special cases."""
-    if dimension == "factor" and (not value or value == ""):
+    if dimension == "factor" and not value:
         return NO_FACTOR_LABEL
     return str(value)
 
@@ -404,131 +479,23 @@ def build_hierarchical_pivot(
         return []
 
     # Build a tree of groups from the flat data
-    tree = _build_group_tree(grouped_data, hierarchy, level=0)
+    tree = _build_tree(grouped_data, hierarchy, level=0)
+
+    def _timeline_leaf(leaf_data, dim, group_val):
+        bucket_data = [
+            {
+                "time_bucket": row["time_bucket"],
+                "direction": row["direction"],
+                "count": int(row["count"]),
+            }
+            for row in leaf_data
+        ]
+        fig = build_timeline_figure(bucket_data, granularity)
+        return dcc.Graph(
+            figure=fig,
+            config={"displayModeBar": False},
+            style={"height": "250px"},
+        )
 
     # Render the tree as nested Details/Summary components
-    return _render_group_tree(tree, hierarchy, granularity, level=0)
-
-
-def _build_group_tree(
-    rows: list[dict],
-    hierarchy: list[str],
-    level: int,
-) -> dict:
-    """Build a nested dict tree from flat grouped data.
-
-    Returns:
-        Dict mapping group_value -> {
-            "count": total_breach_count,
-            "bucket_data": list of {time_bucket, direction, count} (only at leaf level),
-            "children": sub-tree dict (only at non-leaf level),
-        }
-    """
-    dim = hierarchy[level]
-    is_leaf = level == len(hierarchy) - 1
-
-    groups: dict[str, dict] = {}
-
-    for row in rows:
-        group_val = str(row[dim]) if row[dim] is not None else ""
-
-        if group_val not in groups:
-            groups[group_val] = {"count": 0, "bucket_data": [], "children_rows": []}
-
-        groups[group_val]["count"] += int(row["count"])
-
-        if is_leaf:
-            groups[group_val]["bucket_data"].append(
-                {
-                    "time_bucket": row["time_bucket"],
-                    "direction": row["direction"],
-                    "count": int(row["count"]),
-                }
-            )
-        else:
-            groups[group_val]["children_rows"].append(row)
-
-    # For non-leaf levels, recursively build children
-    result: dict[str, dict] = {}
-    for group_val, data in sorted(groups.items()):
-        entry: dict = {"count": data["count"]}
-        if is_leaf:
-            entry["bucket_data"] = data["bucket_data"]
-        else:
-            entry["children"] = _build_group_tree(data["children_rows"], hierarchy, level + 1)
-        result[group_val] = entry
-
-    return result
-
-
-def _render_group_tree(
-    tree: dict,
-    hierarchy: list[str],
-    granularity: str,
-    level: int,
-) -> list:
-    """Render a group tree as nested html.Details components.
-
-    Groups are collapsed by default (open=False on html.Details).
-    Each group header shows the dimension label, value, and breach count.
-    Leaf groups contain a timeline chart.
-    """
-    dim = hierarchy[level]
-    dim_label = DIMENSION_LABELS.get(dim, dim.title())
-    is_leaf = level == len(hierarchy) - 1
-
-    components = []
-    for group_val, data in tree.items():
-        display_val = _format_group_value(dim, group_val)
-        count = data["count"]
-
-        summary = html.Summary(
-            [
-                html.Span(
-                    f"{dim_label}: {display_val}",
-                    style={"fontWeight": "bold"},
-                ),
-                html.Span(
-                    f" ({count} breach{'es' if count != 1 else ''})",
-                    style={"color": "#6c757d", "fontSize": "13px"},
-                ),
-            ],
-            style={
-                "cursor": "pointer",
-                "padding": "6px 10px",
-                "backgroundColor": f"rgba(0,0,0,{0.03 + level * 0.02})",
-                "borderRadius": "4px",
-                "marginBottom": "4px",
-                "userSelect": "none",
-            },
-        )
-
-        if is_leaf:
-            fig = build_timeline_figure(data["bucket_data"], granularity)
-            children = [
-                summary,
-                html.Div(
-                    dcc.Graph(
-                        figure=fig,
-                        config={"displayModeBar": False},
-                        style={"height": "250px"},
-                    ),
-                    style={"paddingLeft": "20px"},
-                ),
-            ]
-        else:
-            sub_components = _render_group_tree(data["children"], hierarchy, granularity, level + 1)
-            children = [
-                summary,
-                html.Div(sub_components, style={"paddingLeft": "20px"}),
-            ]
-
-        components.append(
-            html.Details(
-                children,
-                open=False,  # collapsed by default
-                style={"marginBottom": "4px"},
-            )
-        )
-
-    return components
+    return _render_tree(tree, hierarchy, _timeline_leaf, level=0)
