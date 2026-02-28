@@ -41,7 +41,9 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
         portfolio_name = csv_path.parent.name
         union_parts.append(
             f"SELECT *, '{portfolio_name}' AS portfolio "
-            f"FROM read_csv_auto('{csv_path}', types={{'factor': 'VARCHAR'}})"
+            f"FROM read_csv_auto('{csv_path}', types={{"
+            f"'factor': 'VARCHAR', 'value': 'DOUBLE', "
+            f"'threshold_min': 'DOUBLE', 'threshold_max': 'DOUBLE'}})"
         )
     union_query = " UNION ALL ".join(union_parts)
 
