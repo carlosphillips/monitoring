@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 from pathlib import Path
 
 import dash_bootstrap_components as dbc
@@ -34,11 +35,7 @@ def create_app(output_dir: str | Path) -> Dash:
     # (see callbacks.py _db_lock) to serialize all queries.
     app.server.config["DUCKDB_CONN"] = conn
 
-    @app.server.teardown_appcontext
-    def _close_db(exc: BaseException | None) -> None:  # noqa: ARG001
-        conn = app.server.config.pop("DUCKDB_CONN", None)
-        if conn is not None:
-            conn.close()
+    atexit.register(conn.close)
 
     # Build layout with filter options and date range from data
     filter_options = get_filter_options(conn)
