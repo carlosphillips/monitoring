@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 import duckdb
-import numpy as np
 import pandas as pd
 
 from monitor.dashboard.constants import NO_FACTOR_LABEL
@@ -36,33 +35,25 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
 
     conn = duckdb.connect(":memory:")
 
-    # Load each CSV, adding the portfolio column from the parent directory name
-    frames: list[pd.DataFrame] = []
+    # Build UNION ALL query for all CSV files using DuckDB-native read_csv_auto
+    union_parts = []
     for csv_path in csv_files:
         portfolio_name = csv_path.parent.name
-        df = pd.read_csv(csv_path, dtype={"factor": str})
-        df["portfolio"] = portfolio_name
-        frames.append(df)
+        union_parts.append(
+            f"SELECT *, '{portfolio_name}' AS portfolio "
+            f"FROM read_csv_auto('{csv_path}', types={{'factor': 'VARCHAR'}})"
+        )
+    union_query = " UNION ALL ".join(union_parts)
 
-    combined = pd.concat(frames, ignore_index=True)
-
-    # Validate for NaN/Inf in numeric columns
-    numeric_cols = combined.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols):
-        if combined[numeric_cols].isin([np.inf, -np.inf]).any().any():
-            logger.warning("Inf values detected in breach data")
-        if combined[numeric_cols].isna().any().any():
-            logger.warning("NaN values detected in breach data (expected for nullable thresholds)")
-
-    # Register the raw dataframe, then create the breaches table with computed columns
-    conn.register("raw_breaches", combined)
-    conn.execute("""
+    # Create breaches table with computed columns directly from CSV
+    conn.execute(f"""
         CREATE TABLE breaches AS
         SELECT
             *,
             CASE
                 WHEN threshold_max IS NOT NULL AND value > threshold_max THEN 'upper'
                 WHEN threshold_min IS NOT NULL AND value < threshold_min THEN 'lower'
+                ELSE 'unknown'
             END AS direction,
             CASE
                 WHEN threshold_max IS NOT NULL AND value > threshold_max
@@ -72,9 +63,24 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
                 ELSE 0.0
             END AS distance,
             ABS(value) AS abs_value
-        FROM raw_breaches
+        FROM ({union_query})
     """)
-    conn.unregister("raw_breaches")
+
+    # Validate for Inf values
+    inf_count = conn.execute("""
+        SELECT COUNT(*) FROM breaches
+        WHERE isinf(value) OR isinf(threshold_min) OR isinf(threshold_max)
+    """).fetchone()[0]
+    if inf_count > 0:
+        logger.warning("Inf values detected in breach data")
+
+    # Validate for NaN values (expected for nullable thresholds)
+    nan_count = conn.execute("""
+        SELECT COUNT(*) FROM breaches
+        WHERE isnan(value) OR isnan(threshold_min) OR isnan(threshold_max)
+    """).fetchone()[0]
+    if nan_count > 0:
+        logger.warning("NaN values detected in breach data (expected for nullable thresholds)")
 
     row_count = conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
     logger.info("Loaded %d breaches from %d portfolios", row_count, len(csv_files))
@@ -165,13 +171,13 @@ def query_attributions(
 
         select_clause = ", ".join(select_cols)
 
-        # Use parameterized query for values (parquet path and date filter)
-        placeholders = ", ".join("?" for _ in end_dates)
+        # Use parameterized query for values; cast params to DATE for predicate pushdown
+        date_placeholders = ", ".join("?::DATE" for _ in end_dates)
 
         query = f"""
             SELECT {select_clause}
             FROM read_parquet(?)
-            WHERE CAST(end_date AS VARCHAR) IN ({placeholders})
+            WHERE end_date IN ({date_placeholders})
         """
         result = conn.execute(query, [str(parquet_path)] + list(end_dates)).fetchdf()
         result["end_date"] = result["end_date"].astype(str)
@@ -198,12 +204,12 @@ def get_filter_options(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
 
     # Factor needs special handling for NULL/empty values
     rows = conn.execute(
-        'SELECT DISTINCT COALESCE(NULLIF("factor", \'\'), NULL) AS factor '
+        'SELECT DISTINCT NULLIF("factor", \'\') AS factor '
         "FROM breaches ORDER BY factor"
     ).fetchall()
     factor_values = []
     for r in rows:
-        if r[0] is None or r[0] == "":
+        if r[0] is None:
             factor_values.append(NO_FACTOR_LABEL)
         else:
             factor_values.append(str(r[0]))

@@ -97,6 +97,37 @@ class TestLoadBreaches:
         count = conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
         assert count == 7
 
+    def test_inf_value_logs_warning(self, tmp_path, caplog):
+        """Test that Inf values trigger a warning."""
+        import csv
+        import logging
+
+        portfolio_dir = tmp_path / "test_portfolio"
+        portfolio_dir.mkdir()
+        fieldnames = [
+            "end_date", "layer", "factor", "window",
+            "value", "threshold_min", "threshold_max",
+        ]
+        rows = [
+            {
+                "end_date": "2024-01-01",
+                "layer": "structural",
+                "factor": "market",
+                "window": "daily",
+                "value": "inf",
+                "threshold_min": "-0.005",
+                "threshold_max": "0.005",
+            },
+        ]
+        with open(portfolio_dir / "breaches.csv", "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        with caplog.at_level(logging.WARNING):
+            load_breaches(tmp_path)
+        assert "Inf values detected" in caplog.text
+
 
 class TestQueryAttributions:
     """Tests for query_attributions()."""
@@ -273,3 +304,15 @@ class TestGetFilterOptions:
         options = get_filter_options(conn)
         assert "daily" in options["window"]
         assert "monthly" in options["window"]
+
+
+class TestCreateApp:
+    """Tests for create_app()."""
+
+    def test_creates_dash_app(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        assert app.title == "Breach Explorer"
+        assert "DUCKDB_CONN" in app.server.config
+        assert "OUTPUT_DIR" in app.server.config

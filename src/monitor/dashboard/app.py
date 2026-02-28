@@ -27,7 +27,10 @@ def create_app(output_dir: str | Path) -> Dash:
         title="Breach Explorer",
     )
 
-    # Store connection and output_dir on the server for callback access
+    # Store connection and output_dir on the server for callback access.
+    # WARNING: DuckDB connections are NOT thread-safe. Phase 1 has no callbacks
+    # so this is safe, but Phase 2 must use cursor-per-request or a threading lock.
+    # See: https://duckdb.org/docs/api/python/dbapi
     app.server.config["DUCKDB_CONN"] = conn
     app.server.config["OUTPUT_DIR"] = str(output_dir)
 

@@ -11,13 +11,13 @@ DIRECTION = "direction"
 TIME = "end_date"
 
 # All groupable dimensions (can appear in row hierarchy)
-GROUPABLE_DIMENSIONS = [PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION]
+GROUPABLE_DIMENSIONS: tuple[str, ...] = (PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION)
 
 # Dimensions usable as column axis
-COLUMN_AXIS_DIMENSIONS = [TIME, PORTFOLIO, LAYER, FACTOR, WINDOW]
+COLUMN_AXIS_DIMENSIONS: tuple[str, ...] = (TIME, PORTFOLIO, LAYER, FACTOR, WINDOW)
 
 # All filter dimensions
-FILTER_DIMENSIONS = [PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION]
+FILTER_DIMENSIONS: tuple[str, ...] = (PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION)
 
 # Color scheme: lower = red, upper = blue
 COLOR_LOWER = "#d62728"
@@ -38,4 +38,4 @@ DAILY_THRESHOLD = 90
 WEEKLY_THRESHOLD = 365
 
 # Time granularity options
-TIME_GRANULARITIES = ["Daily", "Weekly", "Monthly", "Quarterly", "Yearly"]
+TIME_GRANULARITIES: tuple[str, ...] = ("Daily", "Weekly", "Monthly", "Quarterly", "Yearly")

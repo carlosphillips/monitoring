@@ -23,10 +23,10 @@ class _DefaultGroup(click.Group):
 
     default_cmd_name = "run"
 
-    def parse_args(self, ctx, args):
-        # If args are empty or the first arg is not a known subcommand,
-        # prepend the default subcommand so options like --input are routed correctly.
-        if not args or args[0] not in self.commands:
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # Only prepend 'run' when args look like options (start with '-'),
+        # not when they look like a subcommand name (which may be a typo).
+        if not args or args[0].startswith("-"):
             args = [self.default_cmd_name] + list(args)
         return super().parse_args(ctx, args)
 
@@ -193,8 +193,17 @@ def dashboard(output_dir: Path, port: int, debug: bool) -> None:
         stream=sys.stderr,
     )
 
-    from monitor.dashboard import create_app
+    try:
+        from monitor.dashboard import create_app
+    except ImportError:
+        click.echo(
+            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
+            err=True,
+        )
+        sys.exit(1)
 
     app = create_app(output_dir)
+    if debug:
+        logger.warning("DEBUG MODE ENABLED — do not expose to untrusted networks")
     logger.info("Starting Breach Explorer Dashboard on http://localhost:%d", port)
-    app.run(port=port, debug=debug)
+    app.run(host="127.0.0.1", port=port, debug=debug)
