@@ -9,6 +9,9 @@ from monitor.dashboard.constants import (
     COLOR_LOWER,
     COLOR_UPPER,
     DEFAULT_PAGE_SIZE,
+    DIMENSION_LABELS,
+    GROUPABLE_DIMENSIONS,
+    MAX_HIERARCHY_LEVELS,
     ROW_COLOR_LOWER,
     ROW_COLOR_UPPER,
     TIME_GRANULARITIES,
@@ -26,6 +29,8 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
 
     return html.Div(
         [
+            # Stores
+            dcc.Store(id="hierarchy-store", data=[]),
             # Header
             dbc.Navbar(
                 dbc.Container(
@@ -41,6 +46,8 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
                     # Filter bar
                     _build_filter_bar(filter_options, min_date, max_date),
                     html.Hr(className="my-3"),
+                    # Row Grouping controls
+                    _build_hierarchy_section(),
                     # Pivot View
                     _build_pivot_section(),
                     html.Hr(className="my-3"),
@@ -203,6 +210,82 @@ def _build_filter_bar(
     )
 
 
+def _build_hierarchy_section() -> html.Div:
+    """Build the Row Grouping controls section.
+
+    Uses fixed hierarchy level slots (up to MAX_HIERARCHY_LEVELS) with
+    visibility controlled by callbacks. Each level has a dropdown for
+    dimension selection and a remove button.
+    """
+    all_options = [{"label": DIMENSION_LABELS[d], "value": d} for d in GROUPABLE_DIMENSIONS]
+
+    level_containers = []
+    for i in range(MAX_HIERARCHY_LEVELS):
+        label = "Group by" if i == 0 else "Then by"
+        level_containers.append(
+            html.Div(
+                dbc.InputGroup(
+                    [
+                        dbc.InputGroupText(label, style={"fontSize": "13px"}),
+                        html.Div(
+                            dcc.Dropdown(
+                                id=f"hierarchy-level-{i}",
+                                options=all_options,
+                                value=None,
+                                clearable=False,
+                                placeholder="Select dimension...",
+                                style={"minWidth": "150px"},
+                            ),
+                            className="flex-grow-1",
+                        ),
+                        dbc.Button(
+                            "\u00d7",
+                            id=f"hierarchy-remove-{i}",
+                            color="light",
+                            size="sm",
+                            className="border",
+                            style={"fontSize": "16px", "lineHeight": "1"},
+                        ),
+                    ],
+                    size="sm",
+                ),
+                id=f"hierarchy-level-{i}-container",
+                style={"display": "none"},
+                className="mb-1",
+            )
+        )
+
+    return html.Div(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        html.H6("Row Grouping", className="mb-0 text-muted"),
+                        md="auto",
+                    ),
+                    dbc.Col(
+                        html.Div(
+                            level_containers
+                            + [
+                                dbc.Button(
+                                    "+ Add level",
+                                    id="hierarchy-add-btn",
+                                    color="light",
+                                    size="sm",
+                                    className="border mt-1",
+                                ),
+                            ],
+                        ),
+                        md=6,
+                    ),
+                ],
+                className="mb-3 align-items-start",
+            ),
+        ],
+        id="hierarchy-section",
+    )
+
+
 def _build_pivot_section() -> html.Div:
     """Build the Pivot View section with timeline chart and controls."""
     return html.Div(
@@ -224,10 +307,16 @@ def _build_pivot_section() -> html.Div:
                 ],
                 className="mb-2 align-items-center",
             ),
-            dcc.Graph(
-                id="pivot-timeline-chart",
-                config={"displayModeBar": False},
-                style={"height": "350px"},
+            # Container for pivot chart(s) -- replaced by callback
+            html.Div(
+                id="pivot-chart-container",
+                children=[
+                    dcc.Graph(
+                        id="pivot-timeline-chart",
+                        config={"displayModeBar": False},
+                        style={"height": "350px"},
+                    ),
+                ],
             ),
             html.Div(
                 id="pivot-empty-message",

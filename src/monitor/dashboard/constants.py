@@ -39,3 +39,16 @@ WEEKLY_THRESHOLD = 365
 
 # Time granularity options
 TIME_GRANULARITIES: tuple[str, ...] = ("Daily", "Weekly", "Monthly", "Quarterly", "Yearly")
+
+# Maximum number of row hierarchy levels
+MAX_HIERARCHY_LEVELS = 3
+
+# Display labels for dimension names
+DIMENSION_LABELS: dict[str, str] = {
+    PORTFOLIO: "Portfolio",
+    LAYER: "Layer",
+    FACTOR: "Factor",
+    WINDOW: "Window",
+    DIRECTION: "Direction",
+    TIME: "Time",
+}

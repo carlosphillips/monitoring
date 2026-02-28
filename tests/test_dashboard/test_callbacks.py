@@ -1,9 +1,9 @@
-"""Tests for dashboard callbacks: filter logic, empty states, residual factor handling."""
+"""Tests for dashboard callbacks: filter logic, empty states, residual factor, hierarchy."""
 
 from __future__ import annotations
 
-from monitor.dashboard.callbacks import _build_where_clause
-from monitor.dashboard.constants import NO_FACTOR_LABEL
+from monitor.dashboard.callbacks import _build_where_clause, _get_available_dimensions
+from monitor.dashboard.constants import GROUPABLE_DIMENSIONS, NO_FACTOR_LABEL
 from monitor.dashboard.data import load_breaches
 
 
@@ -65,16 +65,12 @@ class TestBuildWhereClause:
         assert params == ["market", "HML"]
 
     def test_window_filter(self):
-        sql, params = _build_where_clause(
-            None, None, None, ["daily"], None, None, None, None, None
-        )
+        sql, params = _build_where_clause(None, None, None, ["daily"], None, None, None, None, None)
         assert '"window" IN (?)' in sql
         assert params == ["daily"]
 
     def test_direction_filter(self):
-        sql, params = _build_where_clause(
-            None, None, None, None, ["upper"], None, None, None, None
-        )
+        sql, params = _build_where_clause(None, None, None, None, ["upper"], None, None, None, None)
         assert "direction IN (?)" in sql
         assert params == ["upper"]
 
@@ -133,9 +129,7 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             ["portfolio_a"], None, None, None, None, None, None, None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         assert count == 5  # portfolio_a has 5 breaches
 
     def test_filter_by_direction(self, sample_output):
@@ -143,9 +137,7 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             None, None, None, None, ["upper"], None, None, None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         # Upper: portfolio_a rows 0,4 + portfolio_b row 0 = 3
         assert count == 3
 
@@ -154,9 +146,7 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             None, None, [NO_FACTOR_LABEL], None, None, None, None, None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         assert count == 1  # Only the residual breach
 
     def test_filter_date_range(self, sample_output):
@@ -164,9 +154,7 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             None, None, None, None, None, "2024-01-03", "2024-01-05", None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         # Jan 3: 2 breaches (portfolio_a), Jan 4: 1 (portfolio_a), Jan 5: 1 (portfolio_b)
         assert count == 4
 
@@ -175,9 +163,7 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             None, None, None, None, None, None, None, None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         assert count == 7
 
     def test_zero_match_filter(self, sample_output):
@@ -185,10 +171,49 @@ class TestFilterWithDuckDB:
         where_sql, params = _build_where_clause(
             ["nonexistent_portfolio"], None, None, None, None, None, None, None, None
         )
-        count = conn.execute(
-            f"SELECT COUNT(*) FROM breaches {where_sql}", params
-        ).fetchone()[0]
+        count = conn.execute(f"SELECT COUNT(*) FROM breaches {where_sql}", params).fetchone()[0]
         assert count == 0
+
+
+class TestGetAvailableDimensions:
+    """Tests for _get_available_dimensions() -- dimension exclusivity."""
+
+    def test_empty_hierarchy_returns_all(self):
+        options = _get_available_dimensions([])
+        values = [o["value"] for o in options]
+        assert values == list(GROUPABLE_DIMENSIONS)
+
+    def test_one_dimension_used(self):
+        options = _get_available_dimensions(["portfolio"])
+        values = [o["value"] for o in options]
+        assert "portfolio" not in values
+        assert len(values) == len(GROUPABLE_DIMENSIONS) - 1
+
+    def test_exclude_index_allows_own_value(self):
+        # Level 0 has "portfolio" -- when computing options for level 0,
+        # "portfolio" should still be available (excluded from "used" set)
+        options = _get_available_dimensions(["portfolio", "layer"], exclude_index=0)
+        values = [o["value"] for o in options]
+        assert "portfolio" in values  # own value is available
+        assert "layer" not in values  # other level's value is excluded
+
+    def test_two_dimensions_used(self):
+        options = _get_available_dimensions(["portfolio", "layer"])
+        values = [o["value"] for o in options]
+        assert "portfolio" not in values
+        assert "layer" not in values
+        assert len(values) == len(GROUPABLE_DIMENSIONS) - 2
+
+    def test_all_dimensions_used(self):
+        options = _get_available_dimensions(list(GROUPABLE_DIMENSIONS))
+        assert len(options) == 0
+
+    def test_options_have_labels(self):
+        options = _get_available_dimensions([])
+        for opt in options:
+            assert "label" in opt
+            assert "value" in opt
+            assert opt["label"]  # non-empty label
 
 
 class TestCallbacksIntegration:
@@ -203,4 +228,13 @@ class TestCallbacksIntegration:
         assert "filter-portfolio" in layout_str
         assert "filter-layer" in layout_str
         assert "detail-table" in layout_str
-        assert "pivot-timeline-chart" in layout_str
+        assert "pivot-chart-container" in layout_str
+
+    def test_app_has_hierarchy_controls(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        layout_str = str(app.layout)
+        assert "hierarchy-store" in layout_str
+        assert "hierarchy-add-btn" in layout_str
+        assert "hierarchy-level-0" in layout_str

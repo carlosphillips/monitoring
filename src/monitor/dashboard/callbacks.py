@@ -1,14 +1,24 @@
-"""All Dash callbacks: filter, pivot, detail."""
+"""All Dash callbacks: filter, hierarchy, pivot, detail."""
 
 from __future__ import annotations
 
 import threading
 
-from dash import Input, Output
+from dash import Input, Output, State, ctx, dcc, html, no_update
 from flask import current_app
 
-from monitor.dashboard.constants import NO_FACTOR_LABEL
-from monitor.dashboard.pivot import _granularity_to_trunc, auto_granularity, build_timeline_figure
+from monitor.dashboard.constants import (
+    DIMENSION_LABELS,
+    GROUPABLE_DIMENSIONS,
+    MAX_HIERARCHY_LEVELS,
+    NO_FACTOR_LABEL,
+)
+from monitor.dashboard.pivot import (
+    _granularity_to_trunc,
+    auto_granularity,
+    build_hierarchical_pivot,
+    build_timeline_figure,
+)
 
 # Module-level lock for thread-safe DuckDB access.
 # DuckDB connections are NOT thread-safe; all queries go through this lock.
@@ -99,6 +109,29 @@ def _build_where_clause(
     return "", []
 
 
+def _get_available_dimensions(hierarchy: list[str], exclude_index: int | None = None) -> list[dict]:
+    """Get dimension options available for a hierarchy level dropdown.
+
+    Excludes dimensions already used at other hierarchy levels.
+
+    Args:
+        hierarchy: Current list of selected dimension names.
+        exclude_index: Index in hierarchy to exclude from the "used" set
+            (so the dropdown at this index can show its own current value).
+
+    Returns:
+        List of {label, value} dicts for a Dash dropdown.
+    """
+    used = set()
+    for i, dim in enumerate(hierarchy):
+        if i != exclude_index and dim:
+            used.add(dim)
+
+    return [
+        {"label": DIMENSION_LABELS[d], "value": d} for d in GROUPABLE_DIMENSIONS if d not in used
+    ]
+
+
 def register_callbacks(app):
     """Register all dashboard callbacks on the Dash app."""
 
@@ -149,13 +182,27 @@ def register_callbacks(app):
         Input("filter-distance", "value"),
     )
     def update_detail_table(
-        portfolios, layers, factors, windows, directions,
-        start_date, end_date, abs_value_range, distance_range,
+        portfolios,
+        layers,
+        factors,
+        windows,
+        directions,
+        start_date,
+        end_date,
+        abs_value_range,
+        distance_range,
     ):
         """Filter breaches and update the Detail DataTable."""
         where_sql, params = _build_where_clause(
-            portfolios, layers, factors, windows, directions,
-            start_date, end_date, abs_value_range, distance_range,
+            portfolios,
+            layers,
+            factors,
+            windows,
+            directions,
+            start_date,
+            end_date,
+            abs_value_range,
+            distance_range,
         )
 
         query = f"""
@@ -181,9 +228,121 @@ def register_callbacks(app):
             return [], count_text, {"display": "block"}, {"display": "none"}
         return records, count_text, {"display": "none"}, {"overflowX": "auto"}
 
+    # --- Hierarchy management callbacks ---
+
+    # Build the list of hierarchy Input/Output/State for all fixed levels
+    _hierarchy_level_outputs = []
+    _hierarchy_level_inputs = []
+    for i in range(MAX_HIERARCHY_LEVELS):
+        _hierarchy_level_outputs.extend(
+            [
+                Output(f"hierarchy-level-{i}-container", "style"),
+                Output(f"hierarchy-level-{i}", "options"),
+                Output(f"hierarchy-level-{i}", "value"),
+            ]
+        )
+        _hierarchy_level_inputs.extend(
+            [
+                Input(f"hierarchy-level-{i}", "value"),
+                Input(f"hierarchy-remove-{i}", "n_clicks"),
+            ]
+        )
+
     @app.callback(
-        Output("pivot-timeline-chart", "figure"),
-        Output("pivot-timeline-chart", "style"),
+        Output("hierarchy-store", "data"),
+        *_hierarchy_level_inputs,
+        Input("hierarchy-add-btn", "n_clicks"),
+        State("hierarchy-store", "data"),
+        prevent_initial_call=True,
+    )
+    def update_hierarchy_store(*args):
+        """Update the hierarchy store based on user interactions.
+
+        Handles: dropdown value changes, remove button clicks, add button clicks.
+        """
+        # Parse args: pairs of (value, n_clicks) per level, then add_clicks, then state
+        n_levels = MAX_HIERARCHY_LEVELS
+        level_values = [args[i * 2] for i in range(n_levels)]
+        # remove_clicks = [args[i * 2 + 1] for i in range(n_levels)]  # not needed directly
+        # add_clicks = args[n_levels * 2]  # not needed directly
+        current_hierarchy = args[n_levels * 2 + 1] or []
+
+        triggered_id = ctx.triggered_id
+        if triggered_id is None:
+            return no_update
+
+        # Handle add button
+        if triggered_id == "hierarchy-add-btn":
+            used = set(current_hierarchy)
+            available = [d for d in GROUPABLE_DIMENSIONS if d not in used]
+            if available and len(current_hierarchy) < MAX_HIERARCHY_LEVELS:
+                return current_hierarchy + [available[0]]
+            return no_update
+
+        # Handle remove buttons
+        for i in range(n_levels):
+            if triggered_id == f"hierarchy-remove-{i}":
+                if i < len(current_hierarchy):
+                    new_hierarchy = current_hierarchy[:i] + current_hierarchy[i + 1 :]
+                    return new_hierarchy
+                return no_update
+
+        # Handle level dropdown changes
+        for i in range(n_levels):
+            if triggered_id == f"hierarchy-level-{i}":
+                val = level_values[i]
+                if val is None:
+                    return no_update
+                # If value matches current, no update needed (prevents loops)
+                if i < len(current_hierarchy) and current_hierarchy[i] == val:
+                    return no_update
+                if i < len(current_hierarchy):
+                    new_hierarchy = list(current_hierarchy)
+                    new_hierarchy[i] = val
+                    return new_hierarchy
+                return no_update
+
+        return no_update
+
+    @app.callback(
+        *_hierarchy_level_outputs,
+        Output("hierarchy-add-btn", "style"),
+        Input("hierarchy-store", "data"),
+    )
+    def render_hierarchy_controls(hierarchy):
+        """Render hierarchy controls based on current hierarchy state.
+
+        Shows/hides level containers, updates dropdown options (enforcing
+        dimension exclusivity), and sets dropdown values.
+        """
+        hierarchy = hierarchy or []
+        n = len(hierarchy)
+
+        results = []
+        for i in range(MAX_HIERARCHY_LEVELS):
+            if i < n:
+                # Show this level
+                style = {"display": "flex", "alignItems": "center"}
+                options = _get_available_dimensions(hierarchy, exclude_index=i)
+                value = hierarchy[i]
+            else:
+                # Hide this level
+                style = {"display": "none"}
+                options = []
+                value = None
+            results.extend([style, options, value])
+
+        # Show add button if more levels can be added
+        can_add = n < MAX_HIERARCHY_LEVELS and n < len(GROUPABLE_DIMENSIONS)
+        add_style = {"display": "inline-block"} if can_add else {"display": "none"}
+        results.append(add_style)
+
+        return results
+
+    # --- Pivot chart callback ---
+
+    @app.callback(
+        Output("pivot-chart-container", "children"),
         Output("pivot-empty-message", "style"),
         Input("filter-portfolio", "value"),
         Input("filter-layer", "value"),
@@ -195,19 +354,37 @@ def register_callbacks(app):
         Input("filter-abs-value", "value"),
         Input("filter-distance", "value"),
         Input("pivot-granularity", "value"),
+        Input("hierarchy-store", "data"),
     )
     def update_pivot_chart(
-        portfolios, layers, factors, windows, directions,
-        start_date, end_date, abs_value_range, distance_range,
+        portfolios,
+        layers,
+        factors,
+        windows,
+        directions,
+        start_date,
+        end_date,
+        abs_value_range,
+        distance_range,
         granularity_override,
+        hierarchy,
     ):
-        """Update the Pivot timeline chart based on filters and granularity."""
+        """Update the Pivot view based on filters, granularity, and hierarchy."""
+        hierarchy = hierarchy or []
+
         where_sql, params = _build_where_clause(
-            portfolios, layers, factors, windows, directions,
-            start_date, end_date, abs_value_range, distance_range,
+            portfolios,
+            layers,
+            factors,
+            windows,
+            directions,
+            start_date,
+            end_date,
+            abs_value_range,
+            distance_range,
         )
 
-        # First check if there's any data
+        # Check if there's any data
         count_query = f"SELECT COUNT(*) FROM breaches {where_sql}"
         with _db_lock:
             conn = _get_conn()
@@ -216,8 +393,14 @@ def register_callbacks(app):
         if total == 0:
             empty_fig = build_timeline_figure([], "Monthly")
             return (
-                empty_fig,
-                {"display": "none", "height": "350px"},
+                [
+                    dcc.Graph(
+                        id="pivot-timeline-chart",
+                        figure=empty_fig,
+                        config={"displayModeBar": False},
+                        style={"display": "none", "height": "350px"},
+                    )
+                ],
                 {"display": "block"},
             )
 
@@ -225,7 +408,6 @@ def register_callbacks(app):
         if granularity_override:
             granularity = granularity_override
         else:
-            # Get date range for auto-selection
             date_query = f"""
                 SELECT MIN(end_date), MAX(end_date) FROM breaches {where_sql}
             """
@@ -235,27 +417,68 @@ def register_callbacks(app):
 
         trunc_interval = _granularity_to_trunc(granularity)
 
-        # For weekly bucketing, use Monday start (ISO)
         if trunc_interval == "week":
             bucket_expr = "DATE_TRUNC('week', end_date::DATE)"
         else:
             bucket_expr = f"DATE_TRUNC('{trunc_interval}', end_date::DATE)"
 
-        bucket_query = f"""
-            SELECT
-                {bucket_expr} AS time_bucket,
-                direction,
-                COUNT(*) AS count
-            FROM breaches
-            {where_sql}
-            GROUP BY time_bucket, direction
-            ORDER BY time_bucket
-        """
+        if hierarchy:
+            # Hierarchical pivot: group by hierarchy dimensions + time bucket
+            # Quote all dimension column names to handle reserved words like "window"
+            hierarchy_cols = ", ".join(f'"{dim}"' for dim in hierarchy)
+            bucket_query = f"""
+                SELECT
+                    {hierarchy_cols},
+                    {bucket_expr} AS time_bucket,
+                    direction,
+                    COUNT(*) AS count
+                FROM breaches
+                {where_sql}
+                GROUP BY {hierarchy_cols}, time_bucket, direction
+                ORDER BY {hierarchy_cols}, time_bucket
+            """
 
-        with _db_lock:
-            bucket_df = conn.execute(bucket_query, params).fetchdf()
+            with _db_lock:
+                bucket_df = conn.execute(bucket_query, params).fetchdf()
 
-        bucket_data = bucket_df.to_dict("records")
-        fig = build_timeline_figure(bucket_data, granularity)
+            grouped_data = bucket_df.to_dict("records")
+            components = build_hierarchical_pivot(grouped_data, hierarchy, granularity)
 
-        return fig, {"height": "350px"}, {"display": "none"}
+            if not components:
+                return (
+                    [html.Div("No groups to display.")],
+                    {"display": "none"},
+                )
+
+            return components, {"display": "none"}
+
+        else:
+            # Flat timeline (no hierarchy)
+            bucket_query = f"""
+                SELECT
+                    {bucket_expr} AS time_bucket,
+                    direction,
+                    COUNT(*) AS count
+                FROM breaches
+                {where_sql}
+                GROUP BY time_bucket, direction
+                ORDER BY time_bucket
+            """
+
+            with _db_lock:
+                bucket_df = conn.execute(bucket_query, params).fetchdf()
+
+            bucket_data = bucket_df.to_dict("records")
+            fig = build_timeline_figure(bucket_data, granularity)
+
+            return (
+                [
+                    dcc.Graph(
+                        id="pivot-timeline-chart",
+                        figure=fig,
+                        config={"displayModeBar": False},
+                        style={"height": "350px"},
+                    )
+                ],
+                {"display": "none"},
+            )

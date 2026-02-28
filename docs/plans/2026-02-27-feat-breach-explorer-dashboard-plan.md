@@ -235,24 +235,24 @@ The following gaps were identified during specification analysis and resolved wi
 **Goal**: User-configurable row grouping with hierarchical Pivot rendering and expand/collapse.
 
 **Tasks:**
-- [ ] Update `layout.py`: add Row Grouping controls:
+- [x] Update `layout.py`: add Row Grouping controls:
   - Container with ordered dropdown selectors ("Group by", "Then by", ...)
   - Each dropdown shows available dimensions (excluding those already selected and the current column axis)
   - Remove button (x) per level
   - [+ Add level] button
-- [ ] Update `pivot.py`:
+- [x] Update `pivot.py`:
   - `build_hierarchical_timeline(df, hierarchy, time_bucket) -> component` -- render multiple stacked bar subplots, one per group
   - Expand/collapse chevrons (> collapsed, v expanded) on group headers
   - Summary breach count on collapsed group headers (total count)
   - Nested rendering for multi-level hierarchies
-  - Implementation: use `dbc.Collapse` or custom div toggling within Dash (no custom JS)
-- [ ] Update `callbacks.py`:
+  - Implementation: use `html.Details`/`html.Summary` for native expand/collapse (no custom JS)
+- [x] Update `callbacks.py`:
   - Hierarchy change callback: rebuild Pivot with new grouping
-  - Expand/collapse callback: toggle visibility of child rows
+  - Expand/collapse: native HTML5 Details/Summary (no callback needed)
   - Dimension exclusivity: update available options when hierarchy or column axis changes
   - Clear Pivot selections on hierarchy change
-- [ ] Test hierarchy rendering with 1, 2, and 3 levels
-- [ ] Test dimension exclusivity (adding Layer to hierarchy removes it from column axis dropdown and vice versa)
+- [x] Test hierarchy rendering with 1, 2, and 3 levels
+- [x] Test dimension exclusivity (adding Layer to hierarchy removes it from column axis dropdown and vice versa)
 
 **Files:**
 - `src/monitor/dashboard/layout.py` (edit)

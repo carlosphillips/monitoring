@@ -1,10 +1,15 @@
-"""Tests for pivot rendering: timeline chart, time bucketing."""
+"""Tests for pivot rendering: timeline chart, time bucketing, hierarchical grouping."""
 
 from __future__ import annotations
 
+from dash import html
+
 from monitor.dashboard.pivot import (
+    _build_group_tree,
+    _format_group_value,
     _granularity_to_trunc,
     auto_granularity,
+    build_hierarchical_pivot,
     build_timeline_figure,
 )
 
@@ -85,8 +90,8 @@ class TestBuildTimelineFigure:
             {"time_bucket": "2024-01-01", "direction": "upper", "count": 2},
         ]
         fig = build_timeline_figure(data, "Daily")
-        assert list(fig.data[0].y) == [0]   # lower
-        assert list(fig.data[1].y) == [2]   # upper
+        assert list(fig.data[0].y) == [0]  # lower
+        assert list(fig.data[1].y) == [2]  # upper
 
     def test_mixed_directions(self):
         data = [
@@ -184,3 +189,273 @@ class TestTimelineBucketing:
 
         # All in January 2024
         assert result["time_bucket"].nunique() == 1
+
+
+class TestFormatGroupValue:
+    """Tests for _format_group_value()."""
+
+    def test_normal_value(self):
+        assert _format_group_value("portfolio", "portfolio_a") == "portfolio_a"
+
+    def test_factor_empty_string(self):
+        assert _format_group_value("factor", "") == "(no factor)"
+
+    def test_factor_none_like(self):
+        assert _format_group_value("factor", "") == "(no factor)"
+
+    def test_factor_real_value(self):
+        assert _format_group_value("factor", "market") == "market"
+
+    def test_non_factor_dimension(self):
+        assert _format_group_value("layer", "structural") == "structural"
+
+
+class TestBuildGroupTree:
+    """Tests for _build_group_tree()."""
+
+    def test_single_level(self):
+        rows = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 3},
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "upper", "count": 2},
+            {"portfolio": "b", "time_bucket": "2024-01", "direction": "lower", "count": 1},
+        ]
+        tree = _build_group_tree(rows, ["portfolio"], level=0)
+
+        assert "a" in tree
+        assert "b" in tree
+        assert tree["a"]["count"] == 5
+        assert tree["b"]["count"] == 1
+        assert len(tree["a"]["bucket_data"]) == 2
+        assert len(tree["b"]["bucket_data"]) == 1
+
+    def test_two_levels(self):
+        rows = [
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 3,
+            },
+            {
+                "portfolio": "a",
+                "layer": "tactical",
+                "time_bucket": "2024-01",
+                "direction": "upper",
+                "count": 2,
+            },
+            {
+                "portfolio": "b",
+                "layer": "structural",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 1,
+            },
+        ]
+        tree = _build_group_tree(rows, ["portfolio", "layer"], level=0)
+
+        assert "a" in tree
+        assert "b" in tree
+        assert tree["a"]["count"] == 5
+        assert "children" in tree["a"]
+        assert "structural" in tree["a"]["children"]
+        assert "tactical" in tree["a"]["children"]
+        assert tree["a"]["children"]["structural"]["count"] == 3
+        assert tree["a"]["children"]["tactical"]["count"] == 2
+
+    def test_three_levels(self):
+        rows = [
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "factor": "market",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 3,
+            },
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "factor": "HML",
+                "time_bucket": "2024-01",
+                "direction": "upper",
+                "count": 1,
+            },
+        ]
+        tree = _build_group_tree(rows, ["portfolio", "layer", "factor"], level=0)
+
+        assert "a" in tree
+        structural = tree["a"]["children"]["structural"]
+        assert "children" in structural
+        assert "market" in structural["children"]
+        assert "HML" in structural["children"]
+        assert structural["children"]["market"]["count"] == 3
+        # Leaf level should have bucket_data
+        assert "bucket_data" in structural["children"]["market"]
+
+
+class TestBuildHierarchicalPivot:
+    """Tests for build_hierarchical_pivot()."""
+
+    def test_empty_data(self):
+        result = build_hierarchical_pivot([], ["portfolio"], "Daily")
+        assert result == []
+
+    def test_empty_hierarchy(self):
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 1},
+        ]
+        result = build_hierarchical_pivot(data, [], "Daily")
+        assert result == []
+
+    def test_single_level_returns_details_elements(self):
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 3},
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "upper", "count": 2},
+            {"portfolio": "b", "time_bucket": "2024-01", "direction": "lower", "count": 1},
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio"], "Daily")
+
+        # Should return html.Details elements, one per group
+        assert len(result) == 2
+        for item in result:
+            assert isinstance(item, html.Details)
+            # Collapsed by default
+            assert item.open is False
+
+    def test_single_level_contains_summary_and_chart(self):
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 5},
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio"], "Daily")
+
+        details = result[0]
+        # First child should be Summary
+        assert isinstance(details.children[0], html.Summary)
+        # Summary should contain dimension label and count
+        summary_children = details.children[0].children
+        assert "Portfolio" in summary_children[0].children
+        assert "5 breaches" in summary_children[1].children
+
+    def test_two_level_nesting(self):
+        data = [
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 3,
+            },
+            {
+                "portfolio": "a",
+                "layer": "tactical",
+                "time_bucket": "2024-01",
+                "direction": "upper",
+                "count": 2,
+            },
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio", "layer"], "Daily")
+
+        # Top level: 1 group (portfolio_a)
+        assert len(result) == 1
+        top_details = result[0]
+        assert isinstance(top_details, html.Details)
+
+        # Children div should contain nested Details for each layer
+        children_div = top_details.children[1]
+        nested_items = children_div.children
+        assert len(nested_items) == 2  # structural, tactical
+        for item in nested_items:
+            assert isinstance(item, html.Details)
+
+    def test_three_level_nesting(self):
+        data = [
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "factor": "market",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 3,
+            },
+            {
+                "portfolio": "a",
+                "layer": "structural",
+                "factor": "HML",
+                "time_bucket": "2024-01",
+                "direction": "upper",
+                "count": 1,
+            },
+            {
+                "portfolio": "a",
+                "layer": "tactical",
+                "factor": "momentum",
+                "time_bucket": "2024-01",
+                "direction": "lower",
+                "count": 2,
+            },
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio", "layer", "factor"], "Daily")
+
+        # Top level: 1 group (portfolio_a)
+        assert len(result) == 1
+        # Second level: 2 groups (structural, tactical)
+        level2 = result[0].children[1].children
+        assert len(level2) == 2
+        # Third level under structural: 2 groups (HML, market)
+        level3 = level2[0].children[1].children
+        assert len(level3) == 2
+
+    def test_singular_breach_label(self):
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 1},
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio"], "Daily")
+        summary_children = result[0].children[0].children
+        assert "1 breach)" in summary_children[1].children
+
+
+class TestHierarchicalPivotIntegration:
+    """Integration tests: hierarchical pivot with real DuckDB data."""
+
+    def test_group_by_portfolio(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        result = conn.execute("""
+            SELECT
+                portfolio,
+                DATE_TRUNC('day', end_date::DATE) AS time_bucket,
+                direction,
+                COUNT(*) AS count
+            FROM breaches
+            GROUP BY portfolio, time_bucket, direction
+            ORDER BY portfolio, time_bucket
+        """).fetchdf()
+
+        grouped_data = result.to_dict("records")
+        components = build_hierarchical_pivot(grouped_data, ["portfolio"], "Daily")
+
+        # Should have 2 groups: portfolio_a and portfolio_b
+        assert len(components) == 2
+
+    def test_group_by_portfolio_and_layer(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        result = conn.execute("""
+            SELECT
+                portfolio, layer,
+                DATE_TRUNC('day', end_date::DATE) AS time_bucket,
+                direction,
+                COUNT(*) AS count
+            FROM breaches
+            GROUP BY portfolio, layer, time_bucket, direction
+            ORDER BY portfolio, layer, time_bucket
+        """).fetchdf()
+
+        grouped_data = result.to_dict("records")
+        components = build_hierarchical_pivot(grouped_data, ["portfolio", "layer"], "Daily")
+
+        # Should have 2 top-level groups
+        assert len(components) == 2
