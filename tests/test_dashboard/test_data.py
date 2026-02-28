@@ -174,6 +174,72 @@ class TestQueryAttributions:
         assert len(result) == 0
         assert list(result.columns) == ["end_date", "contribution", "avg_exposure"]
 
+    def test_empty_end_dates(self, single_portfolio_output):
+        conn = load_breaches(single_portfolio_output)
+        result = query_attributions(
+            conn,
+            single_portfolio_output,
+            portfolio="portfolio_a",
+            window="daily",
+            end_dates=[],
+            layer="structural",
+            factor="market",
+        )
+        assert len(result) == 0
+        assert list(result.columns) == ["end_date", "contribution", "avg_exposure"]
+
+    def test_invalid_portfolio_rejected(self, single_portfolio_output):
+        conn = load_breaches(single_portfolio_output)
+        with pytest.raises(ValueError, match="Invalid portfolio"):
+            query_attributions(
+                conn,
+                single_portfolio_output,
+                portfolio="../../etc",
+                window="daily",
+                end_dates=["2024-01-02"],
+                layer="structural",
+                factor="market",
+            )
+
+    def test_invalid_layer_rejected(self, single_portfolio_output):
+        conn = load_breaches(single_portfolio_output)
+        with pytest.raises(ValueError, match="Invalid layer"):
+            query_attributions(
+                conn,
+                single_portfolio_output,
+                portfolio="portfolio_a",
+                window="daily",
+                end_dates=["2024-01-02"],
+                layer="'; DROP TABLE breaches; --",
+                factor="market",
+            )
+
+    def test_invalid_factor_rejected(self, single_portfolio_output):
+        conn = load_breaches(single_portfolio_output)
+        with pytest.raises(ValueError, match="Invalid factor"):
+            query_attributions(
+                conn,
+                single_portfolio_output,
+                portfolio="portfolio_a",
+                window="daily",
+                end_dates=["2024-01-02"],
+                layer="structural",
+                factor="'; DROP TABLE breaches; --",
+            )
+
+    def test_invalid_window_rejected(self, single_portfolio_output):
+        conn = load_breaches(single_portfolio_output)
+        with pytest.raises(ValueError, match="Invalid window"):
+            query_attributions(
+                conn,
+                single_portfolio_output,
+                portfolio="portfolio_a",
+                window="../../etc/passwd",
+                end_dates=["2024-01-02"],
+                layer="structural",
+                factor="market",
+            )
+
 
 class TestGetFilterOptions:
     """Tests for get_filter_options()."""

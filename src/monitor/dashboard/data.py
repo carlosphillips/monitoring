@@ -82,6 +82,12 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
     return conn
 
 
+def _validate_identifier(value: str, known_values: set[str], label: str) -> None:
+    """Validate that a value is in the known set and contains no SQL metacharacters."""
+    if value not in known_values:
+        raise ValueError(f"Invalid {label}: {value!r}")
+
+
 def query_attributions(
     conn: duckdb.DuckDBPyConnection,
     output_dir: str | Path,
@@ -98,15 +104,51 @@ def query_attributions(
 
     Returns a DataFrame with columns: end_date, contribution, avg_exposure.
     """
-    output_path = Path(output_dir)
-    parquet_path = output_path / portfolio / "attributions" / f"{window}_attribution.parquet"
+    empty_result = pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
+
+    if not end_dates:
+        return empty_result
+
+    output_path = Path(output_dir).resolve()
+
+    # Validate portfolio and window against known values from breaches table
+    known_portfolios = {
+        r[0] for r in conn.execute("SELECT DISTINCT portfolio FROM breaches").fetchall()
+    }
+    known_windows = {
+        r[0] for r in conn.execute('SELECT DISTINCT "window" FROM breaches').fetchall()
+    }
+    _validate_identifier(portfolio, known_portfolios, "portfolio")
+    _validate_identifier(window, known_windows, "window")
+
+    # Path traversal protection: resolve and verify within output directory
+    parquet_path = (
+        output_path / portfolio / "attributions" / f"{window}_attribution.parquet"
+    ).resolve()
+    if not str(parquet_path).startswith(str(output_path)):
+        raise ValueError(f"Path traversal detected: {portfolio}/{window}")
 
     if not parquet_path.exists():
         logger.warning("Attribution parquet not found: %s", parquet_path)
-        return pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
+        return empty_result
+
+    # Validate layer/factor against known values
+    known_layers = {
+        r[0] for r in conn.execute("SELECT DISTINCT layer FROM breaches").fetchall()
+    }
+    _validate_identifier(layer, known_layers, "layer")
+
+    if factor is not None and factor != NO_FACTOR_LABEL:
+        known_factors = {
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT factor FROM breaches WHERE factor IS NOT NULL"
+            ).fetchall()
+        }
+        _validate_identifier(factor, known_factors, "factor")
 
     # Determine column names based on layer/factor
-    if factor is None or factor == "" or factor == NO_FACTOR_LABEL:
+    if factor is None or factor == NO_FACTOR_LABEL:
         contrib_col = "residual"
         exposure_col = None  # No avg_exposure for residual
     else:
@@ -114,7 +156,7 @@ def query_attributions(
         exposure_col = f"{layer}_{factor}_avg_exposure"
 
     try:
-        # Build SELECT clause
+        # Build SELECT clause (column names validated above, safe for interpolation)
         select_cols = ["end_date", f'"{contrib_col}" AS contribution']
         if exposure_col:
             select_cols.append(f'"{exposure_col}" AS avg_exposure')
@@ -123,21 +165,21 @@ def query_attributions(
 
         select_clause = ", ".join(select_cols)
 
-        # Build date filter
-        date_list = ", ".join(f"'{d}'" for d in end_dates)
+        # Use parameterized query for values (parquet path and date filter)
+        placeholders = ", ".join("?" for _ in end_dates)
 
         query = f"""
             SELECT {select_clause}
-            FROM read_parquet('{parquet_path}')
-            WHERE CAST(end_date AS VARCHAR) IN ({date_list})
+            FROM read_parquet(?)
+            WHERE CAST(end_date AS VARCHAR) IN ({placeholders})
         """
-        result = conn.execute(query).fetchdf()
+        result = conn.execute(query, [str(parquet_path)] + list(end_dates)).fetchdf()
         result["end_date"] = result["end_date"].astype(str)
         return result
 
     except duckdb.Error as e:
         logger.warning("Error querying attribution parquet %s: %s", parquet_path, e)
-        return pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
+        return empty_result
 
 
 def get_filter_options(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
