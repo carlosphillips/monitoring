@@ -1,9 +1,19 @@
-"""Tests for dashboard callbacks: filter logic, empty states, residual factor, hierarchy."""
+"""Tests for dashboard callbacks: filter, hierarchy, column axis, pivot selection."""
 
 from __future__ import annotations
 
-from monitor.dashboard.callbacks import _build_where_clause, _get_available_dimensions
-from monitor.dashboard.constants import GROUPABLE_DIMENSIONS, NO_FACTOR_LABEL
+from monitor.dashboard.callbacks import (
+    _build_selection_where,
+    _build_where_clause,
+    _get_available_dimensions,
+    _get_column_axis_options,
+)
+from monitor.dashboard.constants import (
+    COLUMN_AXIS_DIMENSIONS,
+    GROUPABLE_DIMENSIONS,
+    NO_FACTOR_LABEL,
+    TIME,
+)
 from monitor.dashboard.data import load_breaches
 
 
@@ -215,6 +225,108 @@ class TestGetAvailableDimensions:
             assert "value" in opt
             assert opt["label"]  # non-empty label
 
+    def test_column_axis_excludes_groupable(self):
+        # When column_axis is "portfolio", it should be excluded from hierarchy options
+        options = _get_available_dimensions([], column_axis="portfolio")
+        values = [o["value"] for o in options]
+        assert "portfolio" not in values
+
+    def test_column_axis_time_not_excluded(self):
+        # Time (end_date) is not groupable, so column_axis=TIME doesn't exclude anything
+        options = _get_available_dimensions([], column_axis=TIME)
+        values = [o["value"] for o in options]
+        assert len(values) == len(GROUPABLE_DIMENSIONS)
+
+
+class TestGetColumnAxisOptions:
+    """Tests for _get_column_axis_options() -- column axis exclusivity."""
+
+    def test_empty_hierarchy_returns_all(self):
+        options = _get_column_axis_options([])
+        values = [o["value"] for o in options]
+        assert values == list(COLUMN_AXIS_DIMENSIONS)
+
+    def test_hierarchy_excludes_from_column_axis(self):
+        options = _get_column_axis_options(["portfolio"])
+        values = [o["value"] for o in options]
+        assert "portfolio" not in values
+        assert TIME in values  # Time is never excluded
+
+    def test_multiple_hierarchy_dims_excluded(self):
+        options = _get_column_axis_options(["portfolio", "layer"])
+        values = [o["value"] for o in options]
+        assert "portfolio" not in values
+        assert "layer" not in values
+        assert TIME in values
+
+    def test_direction_not_in_column_axis(self):
+        # Direction is groupable but NOT a column axis dimension
+        options = _get_column_axis_options(["direction"])
+        values = [o["value"] for o in options]
+        # direction was in hierarchy but isn't in COLUMN_AXIS_DIMENSIONS anyway
+        assert "direction" not in values
+
+
+class TestBuildSelectionWhere:
+    """Tests for _build_selection_where() -- pivot selection filtering."""
+
+    def test_no_selection(self):
+        sql, params = _build_selection_where(None, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_timeline_selection(self):
+        selection = {
+            "type": "timeline",
+            "time_bucket": "2024-01-01",
+            "direction": "lower",
+        }
+        sql, params = _build_selection_where(selection, "Daily", TIME)
+        assert "DATE_TRUNC" in sql
+        assert "direction = ?" in sql
+        assert "2024-01-01" in params
+        assert "lower" in params
+
+    def test_category_selection(self):
+        selection = {
+            "type": "category",
+            "column_dim": "portfolio",
+            "column_value": "portfolio_a",
+            "group_key": "__flat__",
+        }
+        sql, params = _build_selection_where(selection, None, "portfolio")
+        assert '"portfolio" = ?' in sql
+        assert params == ["portfolio_a"]
+
+    def test_category_with_group_key(self):
+        selection = {
+            "type": "category",
+            "column_dim": "portfolio",
+            "column_value": "portfolio_a",
+            "group_key": "layer=structural",
+        }
+        sql, params = _build_selection_where(selection, None, "portfolio")
+        assert '"portfolio" = ?' in sql
+        assert '"layer" = ?' in sql
+        assert "portfolio_a" in params
+        assert "structural" in params
+
+    def test_category_no_factor(self):
+        selection = {
+            "type": "category",
+            "column_dim": "factor",
+            "column_value": NO_FACTOR_LABEL,
+            "group_key": "__flat__",
+        }
+        sql, params = _build_selection_where(selection, None, "factor")
+        assert "factor IS NULL OR factor = ''" in sql
+        assert params == []
+
+    def test_empty_selection_dict(self):
+        sql, params = _build_selection_where({}, None, None)
+        assert sql == ""
+        assert params == []
+
 
 class TestCallbacksIntegration:
     """Test callbacks using the Dash test client."""
@@ -238,3 +350,11 @@ class TestCallbacksIntegration:
         assert "hierarchy-store" in layout_str
         assert "hierarchy-add-btn" in layout_str
         assert "hierarchy-level-0" in layout_str
+
+    def test_app_has_column_axis_and_selection_store(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        layout_str = str(app.layout)
+        assert "column-axis" in layout_str
+        assert "pivot-selection-store" in layout_str

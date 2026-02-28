@@ -116,6 +116,267 @@ def build_timeline_figure(
     return fig
 
 
+def build_category_table(
+    category_data: list[dict],
+    column_dim: str,
+    hierarchy: list[str] | None = None,
+) -> list:
+    """Build a category mode pivot table with split-color cells.
+
+    Args:
+        category_data: List of dicts from DuckDB query with hierarchy dims,
+            column_dim, direction, and count.
+        column_dim: The dimension used for column grouping.
+        hierarchy: Optional list of row hierarchy dimensions.
+
+    Returns:
+        List of Dash HTML components.
+    """
+    if not category_data:
+        return []
+
+    if hierarchy:
+        tree = _build_category_tree(category_data, hierarchy, column_dim, level=0)
+        col_values = sorted(
+            {str(row[column_dim]) for row in category_data if row[column_dim] is not None}
+        )
+        return _render_category_tree(tree, hierarchy, column_dim, col_values, level=0)
+
+    # Flat (no hierarchy): single category table
+    col_values = sorted(
+        {str(row[column_dim]) for row in category_data if row[column_dim] is not None}
+    )
+    cells = _aggregate_category_cells(category_data, column_dim, col_values)
+    return [_render_category_html_table(cells, column_dim, col_values)]
+
+
+def _aggregate_category_cells(
+    rows: list[dict],
+    column_dim: str,
+    col_values: list[str],
+) -> dict[str, dict[str, int]]:
+    """Aggregate rows into {col_value: {upper: N, lower: N}} cell data."""
+    cells: dict[str, dict[str, int]] = {cv: {"upper": 0, "lower": 0} for cv in col_values}
+    for row in rows:
+        cv = str(row[column_dim]) if row[column_dim] is not None else ""
+        direction = row["direction"]
+        count = int(row["count"])
+        if cv in cells and direction in ("upper", "lower"):
+            cells[cv][direction] += count
+    return cells
+
+
+def _render_category_html_table(
+    cells: dict[str, dict[str, int]],
+    column_dim: str,
+    col_values: list[str],
+    group_key: str | None = None,
+) -> html.Table:
+    """Render a single category table with split-color cells.
+
+    Each cell has a blue (upper) top section and red (lower) bottom section.
+    Background intensity scales with breach count.
+    """
+    dim_label = DIMENSION_LABELS.get(column_dim, column_dim.title())
+
+    # Find max count for intensity scaling
+    max_count = max(
+        (cells[cv]["upper"] + cells[cv]["lower"] for cv in col_values),
+        default=1,
+    )
+    if max_count == 0:
+        max_count = 1
+
+    # Header row
+    header_cells = [html.Th("", style={"width": "40px"})]
+    for cv in col_values:
+        display_cv = _format_group_value(column_dim, cv)
+        header_cells.append(
+            html.Th(
+                display_cv,
+                style={
+                    "textAlign": "center",
+                    "padding": "6px 12px",
+                    "fontSize": "13px",
+                    "fontWeight": "bold",
+                    "borderBottom": "2px solid #dee2e6",
+                },
+            )
+        )
+
+    # Data row
+    data_cells = [
+        html.Td(
+            dim_label,
+            style={
+                "fontWeight": "bold",
+                "fontSize": "13px",
+                "padding": "4px 8px",
+                "verticalAlign": "middle",
+            },
+        )
+    ]
+    for cv in col_values:
+        upper = cells[cv]["upper"]
+        lower = cells[cv]["lower"]
+        total = upper + lower
+        intensity = min(total / max_count, 1.0) if max_count > 0 else 0
+
+        cell_id = {"type": "cat-cell", "col": cv, "group": group_key or "__flat__"}
+        data_cells.append(
+            html.Td(
+                _build_split_cell(upper, lower, intensity),
+                id=cell_id,
+                n_clicks=0,
+                style={
+                    "textAlign": "center",
+                    "padding": "0",
+                    "cursor": "pointer",
+                    "border": "1px solid #dee2e6",
+                    "minWidth": "80px",
+                },
+            )
+        )
+
+    return html.Table(
+        [html.Thead(html.Tr(header_cells)), html.Tbody(html.Tr(data_cells))],
+        style={
+            "width": "100%",
+            "borderCollapse": "collapse",
+            "marginBottom": "8px",
+        },
+    )
+
+
+def _build_split_cell(upper: int, lower: int, intensity: float) -> html.Div:
+    """Build a split-color cell: blue top (upper), red bottom (lower)."""
+    upper_alpha = 0.1 + intensity * 0.4
+    lower_alpha = 0.1 + intensity * 0.4
+
+    return html.Div(
+        [
+            html.Div(
+                str(upper) if upper > 0 else "",
+                style={
+                    "backgroundColor": f"rgba(31, 119, 180, {upper_alpha if upper > 0 else 0})",
+                    "color": COLOR_UPPER if upper > 0 else "#ccc",
+                    "padding": "4px 8px",
+                    "fontSize": "13px",
+                    "fontWeight": "bold" if upper > 0 else "normal",
+                    "minHeight": "24px",
+                    "lineHeight": "24px",
+                },
+            ),
+            html.Div(
+                str(lower) if lower > 0 else "",
+                style={
+                    "backgroundColor": f"rgba(214, 39, 40, {lower_alpha if lower > 0 else 0})",
+                    "color": COLOR_LOWER if lower > 0 else "#ccc",
+                    "padding": "4px 8px",
+                    "fontSize": "13px",
+                    "fontWeight": "bold" if lower > 0 else "normal",
+                    "minHeight": "24px",
+                    "lineHeight": "24px",
+                },
+            ),
+        ]
+    )
+
+
+def _build_category_tree(
+    rows: list[dict],
+    hierarchy: list[str],
+    column_dim: str,
+    level: int,
+) -> dict:
+    """Build a nested dict tree for hierarchical category mode.
+
+    Similar to _build_group_tree but stores category cell data at leaf level.
+    """
+    dim = hierarchy[level]
+    is_leaf = level == len(hierarchy) - 1
+
+    groups: dict[str, dict] = {}
+    for row in rows:
+        group_val = str(row[dim]) if row[dim] is not None else ""
+        if group_val not in groups:
+            groups[group_val] = {"count": 0, "rows": [], "children_rows": []}
+        groups[group_val]["count"] += int(row["count"])
+        if is_leaf:
+            groups[group_val]["rows"].append(row)
+        else:
+            groups[group_val]["children_rows"].append(row)
+
+    result: dict[str, dict] = {}
+    for group_val, data in sorted(groups.items()):
+        entry: dict = {"count": data["count"]}
+        if is_leaf:
+            entry["rows"] = data["rows"]
+        else:
+            entry["children"] = _build_category_tree(
+                data["children_rows"], hierarchy, column_dim, level + 1
+            )
+        result[group_val] = entry
+    return result
+
+
+def _render_category_tree(
+    tree: dict,
+    hierarchy: list[str],
+    column_dim: str,
+    col_values: list[str],
+    level: int,
+) -> list:
+    """Render a hierarchical category tree with expand/collapse."""
+    dim = hierarchy[level]
+    dim_label = DIMENSION_LABELS.get(dim, dim.title())
+    is_leaf = level == len(hierarchy) - 1
+
+    components = []
+    for group_val, data in tree.items():
+        display_val = _format_group_value(dim, group_val)
+        count = data["count"]
+
+        summary = html.Summary(
+            [
+                html.Span(f"{dim_label}: {display_val}", style={"fontWeight": "bold"}),
+                html.Span(
+                    f" ({count} breach{'es' if count != 1 else ''})",
+                    style={"color": "#6c757d", "fontSize": "13px"},
+                ),
+            ],
+            style={
+                "cursor": "pointer",
+                "padding": "6px 10px",
+                "backgroundColor": f"rgba(0,0,0,{0.03 + level * 0.02})",
+                "borderRadius": "4px",
+                "marginBottom": "4px",
+                "userSelect": "none",
+            },
+        )
+
+        if is_leaf:
+            cells = _aggregate_category_cells(data["rows"], column_dim, col_values)
+            # Use hierarchy path as group key for cell IDs
+            group_key = f"{dim}={group_val}"
+            table = _render_category_html_table(cells, column_dim, col_values, group_key)
+            children = [
+                summary,
+                html.Div(table, style={"paddingLeft": "20px"}),
+            ]
+        else:
+            sub = _render_category_tree(
+                data["children"], hierarchy, column_dim, col_values, level + 1
+            )
+            children = [
+                summary,
+                html.Div(sub, style={"paddingLeft": "20px"}),
+            ]
+
+        components.append(html.Details(children, open=False, style={"marginBottom": "4px"}))
+    return components
+
+
 def _format_group_value(dimension: str, value: str) -> str:
     """Format a group value for display, handling special cases."""
     if dimension == "factor" and (not value or value == ""):

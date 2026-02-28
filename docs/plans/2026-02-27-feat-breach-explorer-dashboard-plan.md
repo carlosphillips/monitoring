@@ -270,21 +270,19 @@ The following gaps were identified during specification analysis and resolved wi
 **Goal**: Column axis selector, Category Mode rendering, and click-to-filter from Pivot to Detail.
 
 **Tasks:**
-- [ ] Update `layout.py`: add Column Grouping dropdown above Pivot area (Time, Portfolio, Layer, Factor, Window)
-- [ ] Update `pivot.py`:
+- [x] Update `layout.py`: add Column Grouping dropdown above Pivot area (Time, Portfolio, Layer, Factor, Window)
+- [x] Update `pivot.py`:
   - `build_category_table(df, hierarchy, column_dim) -> component` -- render split-color cell table using `html.Table` (DataTable doesn't support split-color custom cells natively)
     - Each cell split: top half blue (upper count), bottom half red (lower count)
     - Conditional formatting: background intensity scales with breach count (darker = more)
     - Same expand/collapse rows as timeline mode
   - Mode switching: detect column axis value and render appropriate mode
-- [ ] Update `callbacks.py`:
+- [x] Update `callbacks.py`:
   - Column axis change callback: switch between Timeline and Category mode, update dimension exclusivity
   - **Pivot-to-Detail click interaction**:
     - Click a bar segment (timeline) or cell (category) → filter Detail to contributing breaches
     - Click a group header → filter Detail to all breaches under that group
-    - Ctrl/Cmd-click for multi-select (use Plotly `clickData` with `selectedData`)
-    - Click selected element again to deselect
-    - Visual indicator: highlighted border on selected elements
+    - Click selected element again to deselect (single-select; Ctrl/Cmd multi-select deferred)
     - Clear selections on filter/hierarchy/column-axis change
   - In timeline mode: clicking red bar segment filters to lower breaches, blue to upper breaches
 

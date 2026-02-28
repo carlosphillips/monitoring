@@ -8,12 +8,14 @@ from dash import dash_table, dcc, html
 from monitor.dashboard.constants import (
     COLOR_LOWER,
     COLOR_UPPER,
+    COLUMN_AXIS_DIMENSIONS,
     DEFAULT_PAGE_SIZE,
     DIMENSION_LABELS,
     GROUPABLE_DIMENSIONS,
     MAX_HIERARCHY_LEVELS,
     ROW_COLOR_LOWER,
     ROW_COLOR_UPPER,
+    TIME,
     TIME_GRANULARITIES,
 )
 
@@ -31,6 +33,7 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
         [
             # Stores
             dcc.Store(id="hierarchy-store", data=[]),
+            dcc.Store(id="pivot-selection-store", data=None),
             # Header
             dbc.Navbar(
                 dbc.Container(
@@ -288,11 +291,34 @@ def _build_hierarchy_section() -> html.Div:
 
 def _build_pivot_section() -> html.Div:
     """Build the Pivot View section with timeline chart and controls."""
+    column_axis_options = [
+        {"label": DIMENSION_LABELS[d], "value": d} for d in COLUMN_AXIS_DIMENSIONS
+    ]
+
     return html.Div(
         [
             dbc.Row(
                 [
-                    dbc.Col(html.H5("Pivot View", className="mb-0"), md=8),
+                    dbc.Col(html.H5("Pivot View", className="mb-0"), md="auto"),
+                    dbc.Col(
+                        dbc.InputGroup(
+                            [
+                                dbc.InputGroupText("Columns", style={"fontSize": "13px"}),
+                                html.Div(
+                                    dcc.Dropdown(
+                                        id="column-axis",
+                                        options=column_axis_options,
+                                        value=TIME,
+                                        clearable=False,
+                                        style={"minWidth": "120px"},
+                                    ),
+                                    className="flex-grow-1",
+                                ),
+                            ],
+                            size="sm",
+                        ),
+                        md=3,
+                    ),
                     dbc.Col(
                         dcc.Dropdown(
                             id="pivot-granularity",
@@ -300,7 +326,6 @@ def _build_pivot_section() -> html.Div:
                             value=None,  # None = auto
                             placeholder="Auto",
                             clearable=True,
-                            className="",
                         ),
                         md=2,
                     ),

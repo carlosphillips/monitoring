@@ -1,14 +1,19 @@
-"""Tests for pivot rendering: timeline chart, time bucketing, hierarchical grouping."""
+"""Tests for pivot rendering: timeline, category, hierarchical grouping."""
 
 from __future__ import annotations
 
 from dash import html
 
 from monitor.dashboard.pivot import (
+    _aggregate_category_cells,
+    _build_category_tree,
     _build_group_tree,
+    _build_split_cell,
     _format_group_value,
     _granularity_to_trunc,
+    _render_category_html_table,
     auto_granularity,
+    build_category_table,
     build_hierarchical_pivot,
     build_timeline_figure,
 )
@@ -458,4 +463,203 @@ class TestHierarchicalPivotIntegration:
         components = build_hierarchical_pivot(grouped_data, ["portfolio", "layer"], "Daily")
 
         # Should have 2 top-level groups
+        assert len(components) == 2
+
+
+# --- Category Mode Tests ---
+
+
+class TestBuildSplitCell:
+    """Tests for _build_split_cell()."""
+
+    def test_both_counts(self):
+        cell = _build_split_cell(3, 2, 0.5)
+        assert isinstance(cell, html.Div)
+        children = cell.children
+        assert len(children) == 2
+        # Upper (blue) section
+        assert children[0].children == "3"
+        # Lower (red) section
+        assert children[1].children == "2"
+
+    def test_zero_upper(self):
+        cell = _build_split_cell(0, 5, 0.5)
+        assert cell.children[0].children == ""  # empty string for zero
+        assert cell.children[1].children == "5"
+
+    def test_zero_lower(self):
+        cell = _build_split_cell(4, 0, 0.5)
+        assert cell.children[0].children == "4"
+        assert cell.children[1].children == ""
+
+    def test_both_zero(self):
+        cell = _build_split_cell(0, 0, 0.0)
+        assert cell.children[0].children == ""
+        assert cell.children[1].children == ""
+
+
+class TestAggregateCategoryCells:
+    """Tests for _aggregate_category_cells()."""
+
+    def test_basic_aggregation(self):
+        rows = [
+            {"portfolio": "a", "direction": "upper", "count": 3},
+            {"portfolio": "a", "direction": "lower", "count": 2},
+            {"portfolio": "b", "direction": "upper", "count": 1},
+        ]
+        cells = _aggregate_category_cells(rows, "portfolio", ["a", "b"])
+        assert cells["a"]["upper"] == 3
+        assert cells["a"]["lower"] == 2
+        assert cells["b"]["upper"] == 1
+        assert cells["b"]["lower"] == 0
+
+    def test_missing_col_value(self):
+        rows = [
+            {"portfolio": "a", "direction": "upper", "count": 1},
+        ]
+        cells = _aggregate_category_cells(rows, "portfolio", ["a", "b"])
+        assert cells["b"]["upper"] == 0
+        assert cells["b"]["lower"] == 0
+
+
+class TestRenderCategoryHtmlTable:
+    """Tests for _render_category_html_table()."""
+
+    def test_basic_table_structure(self):
+        cells = {
+            "a": {"upper": 3, "lower": 2},
+            "b": {"upper": 1, "lower": 0},
+        }
+        table = _render_category_html_table(cells, "portfolio", ["a", "b"])
+        assert isinstance(table, html.Table)
+        # Has thead and tbody
+        assert isinstance(table.children[0], html.Thead)
+        assert isinstance(table.children[1], html.Tbody)
+
+    def test_header_contains_column_values(self):
+        cells = {"structural": {"upper": 1, "lower": 0}}
+        table = _render_category_html_table(cells, "layer", ["structural"])
+        header_row = table.children[0].children  # Thead -> Tr
+        # First header cell is empty, second is "structural"
+        assert header_row.children[1].children == "structural"
+
+    def test_cells_have_pattern_matching_ids(self):
+        cells = {"a": {"upper": 1, "lower": 0}}
+        table = _render_category_html_table(cells, "portfolio", ["a"])
+        data_row = table.children[1].children  # Tbody -> Tr
+        # Second cell (after label) should have cat-cell id
+        cell = data_row.children[1]
+        assert cell.id["type"] == "cat-cell"
+        assert cell.id["col"] == "a"
+
+    def test_cells_have_n_clicks(self):
+        cells = {"a": {"upper": 1, "lower": 0}}
+        table = _render_category_html_table(cells, "portfolio", ["a"])
+        data_row = table.children[1].children
+        cell = data_row.children[1]
+        assert cell.n_clicks == 0
+
+
+class TestBuildCategoryTable:
+    """Tests for build_category_table()."""
+
+    def test_empty_data(self):
+        assert build_category_table([], "portfolio") == []
+
+    def test_flat_category(self):
+        data = [
+            {"portfolio": "a", "direction": "upper", "count": 3},
+            {"portfolio": "a", "direction": "lower", "count": 2},
+            {"portfolio": "b", "direction": "lower", "count": 1},
+        ]
+        result = build_category_table(data, "portfolio")
+        assert len(result) == 1  # single table
+        assert isinstance(result[0], html.Table)
+
+    def test_hierarchical_category(self):
+        data = [
+            {"layer": "structural", "portfolio": "a", "direction": "upper", "count": 3},
+            {"layer": "structural", "portfolio": "b", "direction": "lower", "count": 2},
+            {"layer": "tactical", "portfolio": "a", "direction": "lower", "count": 1},
+        ]
+        result = build_category_table(data, "portfolio", hierarchy=["layer"])
+        # Should have Details elements for each layer group
+        assert len(result) == 2
+        for item in result:
+            assert isinstance(item, html.Details)
+
+    def test_two_level_hierarchical_category(self):
+        data = [
+            {
+                "layer": "structural",
+                "window": "daily",
+                "portfolio": "a",
+                "direction": "upper",
+                "count": 3,
+            },
+            {
+                "layer": "structural",
+                "window": "monthly",
+                "portfolio": "b",
+                "direction": "lower",
+                "count": 1,
+            },
+        ]
+        result = build_category_table(data, "portfolio", hierarchy=["layer", "window"])
+        # Top level: 1 group (structural)
+        assert len(result) == 1
+        # Nested: 2 window groups
+        nested = result[0].children[1].children
+        assert len(nested) == 2
+
+
+class TestBuildCategoryTree:
+    """Tests for _build_category_tree()."""
+
+    def test_single_level(self):
+        rows = [
+            {"layer": "structural", "portfolio": "a", "direction": "upper", "count": 3},
+            {"layer": "tactical", "portfolio": "a", "direction": "lower", "count": 1},
+        ]
+        tree = _build_category_tree(rows, ["layer"], "portfolio", level=0)
+        assert "structural" in tree
+        assert "tactical" in tree
+        assert tree["structural"]["count"] == 3
+        assert tree["tactical"]["count"] == 1
+        # Leaf level should have rows
+        assert "rows" in tree["structural"]
+
+
+class TestCategoryIntegration:
+    """Integration tests: category mode with real DuckDB data."""
+
+    def test_category_by_portfolio(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        result = conn.execute("""
+            SELECT portfolio, direction, COUNT(*) AS count
+            FROM breaches
+            GROUP BY portfolio, direction
+            ORDER BY portfolio
+        """).fetchdf()
+
+        components = build_category_table(result.to_dict("records"), "portfolio")
+        assert len(components) == 1  # single flat table
+
+    def test_category_by_layer_with_portfolio_hierarchy(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        result = conn.execute("""
+            SELECT portfolio, layer, direction, COUNT(*) AS count
+            FROM breaches
+            GROUP BY portfolio, layer, direction
+            ORDER BY portfolio, layer
+        """).fetchdf()
+
+        components = build_category_table(
+            result.to_dict("records"), "layer", hierarchy=["portfolio"]
+        )
+        # 2 portfolio groups
         assert len(components) == 2
