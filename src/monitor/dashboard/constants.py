@@ -52,3 +52,21 @@ DIMENSION_LABELS: dict[str, str] = {
     DIRECTION: "Direction",
     TIME: "Time",
 }
+
+
+def granularity_to_trunc(granularity: str) -> str:
+    """Map granularity label to DuckDB DATE_TRUNC interval.
+
+    Raises ValueError if the granularity is not a known value.
+    """
+    mapping = {
+        "Daily": "day",
+        "Weekly": "week",
+        "Monthly": "month",
+        "Quarterly": "quarter",
+        "Yearly": "year",
+    }
+    try:
+        return mapping[granularity]
+    except KeyError:
+        raise ValueError(f"Unknown granularity: {granularity!r}") from None

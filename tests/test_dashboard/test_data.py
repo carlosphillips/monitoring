@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import pandas as pd
 import pytest
 
 from monitor.dashboard.constants import NO_FACTOR_LABEL
-from monitor.dashboard.data import get_filter_options, load_breaches, query_attributions
+from monitor.dashboard.data import get_filter_options, load_breaches
 
 
 class TestLoadBreaches:
@@ -129,149 +128,6 @@ class TestLoadBreaches:
         assert "Inf values detected" in caplog.text
 
 
-class TestQueryAttributions:
-    """Tests for query_attributions()."""
-
-    def test_basic_query(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        result = query_attributions(
-            conn,
-            single_portfolio_output,
-            portfolio="portfolio_a",
-            window="daily",
-            end_dates=["2024-01-02"],
-            layer="structural",
-            factor="market",
-        )
-        assert len(result) == 1
-        assert abs(result.iloc[0]["contribution"] - 0.006) < 1e-10
-        assert abs(result.iloc[0]["avg_exposure"] - 0.75) < 1e-10
-
-    def test_multiple_dates(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        result = query_attributions(
-            conn,
-            single_portfolio_output,
-            portfolio="portfolio_a",
-            window="daily",
-            end_dates=["2024-01-02", "2024-01-03"],
-            layer="structural",
-            factor="market",
-        )
-        assert len(result) == 2
-
-    def test_residual_factor(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        result = query_attributions(
-            conn,
-            single_portfolio_output,
-            portfolio="portfolio_a",
-            window="daily",
-            end_dates=["2024-01-03"],
-            layer="residual",
-            factor=None,
-        )
-        assert len(result) == 1
-        assert abs(result.iloc[0]["contribution"] - (-0.002)) < 1e-10
-        # Residual has no avg_exposure
-        assert pd.isna(result.iloc[0]["avg_exposure"])
-
-    def test_residual_with_no_factor_label(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        result = query_attributions(
-            conn,
-            single_portfolio_output,
-            portfolio="portfolio_a",
-            window="daily",
-            end_dates=["2024-01-03"],
-            layer="residual",
-            factor=NO_FACTOR_LABEL,
-        )
-        assert len(result) == 1
-        assert abs(result.iloc[0]["contribution"] - (-0.002)) < 1e-10
-
-    def test_missing_parquet(self, sample_output):
-        conn = load_breaches(sample_output)
-        # portfolio_b has no attribution parquets
-        result = query_attributions(
-            conn,
-            sample_output,
-            portfolio="portfolio_b",
-            window="daily",
-            end_dates=["2024-01-02"],
-            layer="structural",
-            factor="SMB",
-        )
-        assert len(result) == 0
-        assert list(result.columns) == ["end_date", "contribution", "avg_exposure"]
-
-    def test_empty_end_dates(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        result = query_attributions(
-            conn,
-            single_portfolio_output,
-            portfolio="portfolio_a",
-            window="daily",
-            end_dates=[],
-            layer="structural",
-            factor="market",
-        )
-        assert len(result) == 0
-        assert list(result.columns) == ["end_date", "contribution", "avg_exposure"]
-
-    def test_invalid_portfolio_rejected(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        with pytest.raises(ValueError, match="Invalid portfolio"):
-            query_attributions(
-                conn,
-                single_portfolio_output,
-                portfolio="../../etc",
-                window="daily",
-                end_dates=["2024-01-02"],
-                layer="structural",
-                factor="market",
-            )
-
-    def test_invalid_layer_rejected(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        with pytest.raises(ValueError, match="Invalid layer"):
-            query_attributions(
-                conn,
-                single_portfolio_output,
-                portfolio="portfolio_a",
-                window="daily",
-                end_dates=["2024-01-02"],
-                layer="'; DROP TABLE breaches; --",
-                factor="market",
-            )
-
-    def test_invalid_factor_rejected(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        with pytest.raises(ValueError, match="Invalid factor"):
-            query_attributions(
-                conn,
-                single_portfolio_output,
-                portfolio="portfolio_a",
-                window="daily",
-                end_dates=["2024-01-02"],
-                layer="structural",
-                factor="'; DROP TABLE breaches; --",
-            )
-
-    def test_invalid_window_rejected(self, single_portfolio_output):
-        conn = load_breaches(single_portfolio_output)
-        with pytest.raises(ValueError, match="Invalid window"):
-            query_attributions(
-                conn,
-                single_portfolio_output,
-                portfolio="portfolio_a",
-                window="../../etc/passwd",
-                end_dates=["2024-01-02"],
-                layer="structural",
-                factor="market",
-            )
-
-
 class TestGetFilterOptions:
     """Tests for get_filter_options()."""
 
@@ -315,4 +171,3 @@ class TestCreateApp:
         app = create_app(sample_output)
         assert app.title == "Breach Explorer"
         assert "DUCKDB_CONN" in app.server.config
-        assert "OUTPUT_DIR" in app.server.config

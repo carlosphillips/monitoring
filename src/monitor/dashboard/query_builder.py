@@ -12,8 +12,9 @@ from monitor.dashboard.constants import (
     COLUMN_AXIS_DIMENSIONS,
     GROUPABLE_DIMENSIONS,
     NO_FACTOR_LABEL,
+    TIME_GRANULARITIES,
+    granularity_to_trunc,
 )
-from monitor.dashboard.pivot import granularity_to_trunc
 
 # Allow-list of column names that may be interpolated as SQL identifiers.
 # Dash stores and inputs are client-side JSON that can be tampered with;

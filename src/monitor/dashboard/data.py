@@ -1,4 +1,4 @@
-"""DuckDB data layer: load breaches, query attributions."""
+"""DuckDB data layer: load breaches into an in-memory DuckDB table."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import re
 from pathlib import Path
 
 import duckdb
-import pandas as pd
 
 from monitor.dashboard.constants import NO_FACTOR_LABEL
 
@@ -42,9 +41,11 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
         portfolio_name = csv_path.parent.name
         if not re.match(r'^[\w\-. ]+$', portfolio_name):
             raise ValueError(f"Invalid portfolio directory name: {portfolio_name!r}")
+        # Escape single quotes in path for SQL string literal safety.
+        safe_path = str(csv_path).replace("'", "''")
         union_parts.append(
             f"SELECT *, '{portfolio_name}' AS portfolio "
-            f"FROM read_csv_auto('{csv_path}', types={{"
+            f"FROM read_csv_auto('{safe_path}', types={{"
             f"'factor': 'VARCHAR', 'value': 'DOUBLE', "
             f"'threshold_min': 'DOUBLE', 'threshold_max': 'DOUBLE'}})"
         )
@@ -91,110 +92,6 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
     logger.info("Loaded %d breaches from %d portfolios", row_count, len(csv_files))
 
     return conn
-
-
-def _validate_identifier(value: str, known_values: set[str], label: str) -> None:
-    """Validate that a value is in the known set and contains no SQL metacharacters."""
-    if value not in known_values:
-        raise ValueError(f"Invalid {label}: {value!r}")
-
-
-def query_attributions(
-    conn: duckdb.DuckDBPyConnection,
-    output_dir: str | Path,
-    portfolio: str,
-    window: str,
-    end_dates: list[str],
-    layer: str,
-    factor: str | None,
-) -> pd.DataFrame:
-    """Query attribution data from parquet files for breach enrichment.
-
-    For a set of breaches identified by (portfolio, window, end_dates, layer, factor),
-    reads the appropriate parquet file and extracts contribution and avg_exposure.
-
-    Returns a DataFrame with columns: end_date, contribution, avg_exposure.
-
-    Thread safety: this function is NOT thread-safe. The caller MUST
-    serialize access to ``conn`` (e.g. via ``callbacks._db_lock``) when
-    using a shared DuckDB connection.
-    """
-    empty_result = pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
-
-    if not end_dates:
-        return empty_result
-
-    output_path = Path(output_dir).resolve()
-
-    # Validate portfolio and window against known values from breaches table
-    known_portfolios = {
-        r[0] for r in conn.execute("SELECT DISTINCT portfolio FROM breaches").fetchall()
-    }
-    known_windows = {
-        r[0] for r in conn.execute('SELECT DISTINCT "window" FROM breaches').fetchall()
-    }
-    _validate_identifier(portfolio, known_portfolios, "portfolio")
-    _validate_identifier(window, known_windows, "window")
-
-    # Path traversal protection: resolve and verify within output directory
-    parquet_path = (
-        output_path / portfolio / "attributions" / f"{window}_attribution.parquet"
-    ).resolve()
-    if not str(parquet_path).startswith(str(output_path)):
-        raise ValueError(f"Path traversal detected: {portfolio}/{window}")
-
-    if not parquet_path.exists():
-        logger.warning("Attribution parquet not found: %s", parquet_path)
-        return empty_result
-
-    # Validate layer/factor against known values
-    known_layers = {
-        r[0] for r in conn.execute("SELECT DISTINCT layer FROM breaches").fetchall()
-    }
-    _validate_identifier(layer, known_layers, "layer")
-
-    if factor is not None and factor != NO_FACTOR_LABEL:
-        known_factors = {
-            r[0]
-            for r in conn.execute(
-                "SELECT DISTINCT factor FROM breaches WHERE factor IS NOT NULL"
-            ).fetchall()
-        }
-        _validate_identifier(factor, known_factors, "factor")
-
-    # Determine column names based on layer/factor
-    if factor is None or factor == NO_FACTOR_LABEL:
-        contrib_col = "residual"
-        exposure_col = None  # No avg_exposure for residual
-    else:
-        contrib_col = f"{layer}_{factor}"
-        exposure_col = f"{layer}_{factor}_avg_exposure"
-
-    try:
-        # Build SELECT clause (column names validated above, safe for interpolation)
-        select_cols = ["end_date", f'"{contrib_col}" AS contribution']
-        if exposure_col:
-            select_cols.append(f'"{exposure_col}" AS avg_exposure')
-        else:
-            select_cols.append("NULL AS avg_exposure")
-
-        select_clause = ", ".join(select_cols)
-
-        # Use parameterized query for values; cast params to DATE for predicate pushdown
-        date_placeholders = ", ".join("?::DATE" for _ in end_dates)
-
-        query = f"""
-            SELECT {select_clause}
-            FROM read_parquet(?)
-            WHERE end_date IN ({date_placeholders})
-        """
-        result = conn.execute(query, [str(parquet_path)] + list(end_dates)).fetchdf()
-        result["end_date"] = result["end_date"].astype(str)
-        return result
-
-    except duckdb.Error as e:
-        logger.warning("Error querying attribution parquet %s: %s", parquet_path, e)
-        return empty_result
 
 
 def get_filter_options(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:

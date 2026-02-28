@@ -29,17 +29,24 @@ def create_app(output_dir: str | Path) -> Dash:
         title="Breach Explorer",
     )
 
-    # Store connection and output_dir on the server for callback access.
+    # Store connection on the server for callback access.
     # DuckDB connections are NOT thread-safe; callbacks use a threading lock
     # (see callbacks.py _db_lock) to serialize all queries.
     app.server.config["DUCKDB_CONN"] = conn
-    app.server.config["OUTPUT_DIR"] = str(output_dir)
+
+    @app.server.teardown_appcontext
+    def _close_db(exc: BaseException | None) -> None:  # noqa: ARG001
+        conn = app.server.config.pop("DUCKDB_CONN", None)
+        if conn is not None:
+            conn.close()
 
     # Build layout with filter options and date range from data
     filter_options = get_filter_options(conn)
     date_row = conn.execute(
         "SELECT MIN(end_date), MAX(end_date) FROM breaches"
     ).fetchone()
+    if date_row is None or date_row[0] is None:
+        raise ValueError("Breaches table is empty -- cannot determine date range")
     date_range = (str(date_row[0]), str(date_row[1]))
 
     app.layout = build_layout(filter_options, date_range)

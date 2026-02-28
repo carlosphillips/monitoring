@@ -72,71 +72,27 @@ def _build_filter_bar(
             [
                 dbc.Row(
                     [
-                        # Portfolio
-                        dbc.Col(
-                            [
-                                dbc.Label("Portfolio", html_for="filter-portfolio", size="sm"),
-                                dcc.Dropdown(
-                                    id="filter-portfolio",
-                                    options=filter_options.get("portfolio", []),
-                                    multi=True,
-                                    placeholder="All portfolios",
-                                ),
-                            ],
-                            md=2,
-                        ),
-                        # Layer
-                        dbc.Col(
-                            [
-                                dbc.Label("Layer", html_for="filter-layer", size="sm"),
-                                dcc.Dropdown(
-                                    id="filter-layer",
-                                    options=filter_options.get("layer", []),
-                                    multi=True,
-                                    placeholder="All layers",
-                                ),
-                            ],
-                            md=2,
-                        ),
-                        # Factor
-                        dbc.Col(
-                            [
-                                dbc.Label("Factor", html_for="filter-factor", size="sm"),
-                                dcc.Dropdown(
-                                    id="filter-factor",
-                                    options=filter_options.get("factor", []),
-                                    multi=True,
-                                    placeholder="All factors",
-                                ),
-                            ],
-                            md=2,
-                        ),
-                        # Window
-                        dbc.Col(
-                            [
-                                dbc.Label("Window", html_for="filter-window", size="sm"),
-                                dcc.Dropdown(
-                                    id="filter-window",
-                                    options=filter_options.get("window", []),
-                                    multi=True,
-                                    placeholder="All windows",
-                                ),
-                            ],
-                            md=2,
-                        ),
-                        # Direction
-                        dbc.Col(
-                            [
-                                dbc.Label("Direction", html_for="filter-direction", size="sm"),
-                                dcc.Dropdown(
-                                    id="filter-direction",
-                                    options=filter_options.get("direction", []),
-                                    multi=True,
-                                    placeholder="All directions",
-                                ),
-                            ],
-                            md=2,
-                        ),
+                        *[
+                            dbc.Col(
+                                [
+                                    dbc.Label(label, html_for=fid, size="sm"),
+                                    dcc.Dropdown(
+                                        id=fid,
+                                        options=filter_options.get(key, []),
+                                        multi=True,
+                                        placeholder=placeholder,
+                                    ),
+                                ],
+                                md=2,
+                            )
+                            for label, fid, key, placeholder in [
+                                ("Portfolio", "filter-portfolio", "portfolio", "All portfolios"),
+                                ("Layer", "filter-layer", "layer", "All layers"),
+                                ("Factor", "filter-factor", "factor", "All factors"),
+                                ("Window", "filter-window", "window", "All windows"),
+                                ("Direction", "filter-direction", "direction", "All directions"),
+                            ]
+                        ],
                         # Date range
                         dbc.Col(
                             [

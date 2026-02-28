@@ -16,9 +16,10 @@ from monitor.dashboard.constants import (
     MAX_HIERARCHY_LEVELS,
     NO_FACTOR_LABEL,
     TIME,
+    TIME_GRANULARITIES,
+    granularity_to_trunc,
 )
 from monitor.dashboard.pivot import (
-    granularity_to_trunc,
     auto_granularity,
     build_category_table,
     build_hierarchical_pivot,
@@ -56,6 +57,12 @@ FILTER_INPUTS = [
 def _get_conn() -> duckdb.DuckDBPyConnection:
     """Get the DuckDB connection from the Flask app config."""
     return current_app.config["DUCKDB_CONN"]
+
+
+def _fetchall_dicts(result: duckdb.DuckDBPyConnection) -> list[dict]:
+    """Convert a DuckDB result to a list of dicts without pandas overhead."""
+    columns = [desc[0] for desc in result.description]
+    return [dict(zip(columns, row)) for row in result.fetchall()]
 
 
 def _get_available_dimensions(
@@ -138,7 +145,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("detail-empty-message", "style"),
         Output("detail-table", "style_table"),
         *FILTER_INPUTS,
-        Input("pivot-selection-store", "data"),
+        State("pivot-selection-store", "data"),
         State("pivot-granularity", "value"),
         State("column-axis", "value"),
     )
@@ -204,9 +211,8 @@ def register_callbacks(app: dash.Dash) -> None:
 
         with _db_lock:
             conn = _get_conn()
-            df = conn.execute(query, all_params).fetchdf()
-
-        records = df.to_dict("records")
+            result = conn.execute(query, all_params)
+            records = _fetchall_dicts(result)
         count = len(records)
 
         # Detect truncation: we fetched MAX_ROWS+1 to check overflow.
@@ -438,6 +444,9 @@ def register_callbacks(app: dash.Dash) -> None:
         hierarchy = hierarchy or []
         column_axis = column_axis or TIME
         validate_sql_dimensions(hierarchy, column_axis)
+        # Validate granularity against known values; reject tampered client input.
+        if granularity_override and granularity_override not in TIME_GRANULARITIES:
+            granularity_override = None
         is_timeline = column_axis == TIME
 
         # Show/hide granularity dropdown (only relevant for timeline mode)
@@ -455,99 +464,114 @@ def register_callbacks(app: dash.Dash) -> None:
             distance_range,
         )
 
-        # Hold a single lock for all DuckDB queries in this callback.
-        # DuckDB connections are NOT thread-safe; we must not release and
-        # re-acquire between queries to avoid interleaved access.
-        with _db_lock:
-            conn = _get_conn()
+        # Execute all DuckDB queries under the lock, then render outside it.
+        # DuckDB connections are NOT thread-safe; the lock serializes queries.
+        if is_timeline:
+            raw = _query_timeline_pivot(where_sql, params, granularity_override, hierarchy)
+        else:
+            raw = _query_category_pivot(where_sql, params, hierarchy, column_axis)
 
-            count_query = f"SELECT COUNT(*) FROM breaches {where_sql}"
-            total = conn.execute(count_query, params).fetchone()[0]
+        # Empty result check
+        if raw is None:
+            empty_fig = build_timeline_figure([], "Monthly")
+            return (
+                [
+                    dcc.Graph(
+                        id="pivot-timeline-chart",
+                        figure=empty_fig,
+                        config={"displayModeBar": False},
+                        style={"display": "none", "height": "350px"},
+                    )
+                ],
+                {"display": "block"},
+                granularity_style,
+            )
 
-            if total == 0:
-                empty_fig = build_timeline_figure([], "Monthly")
-                return (
-                    [
-                        dcc.Graph(
-                            id="pivot-timeline-chart",
-                            figure=empty_fig,
-                            config={"displayModeBar": False},
-                            style={"display": "none", "height": "350px"},
-                        )
-                    ],
-                    {"display": "block"},
-                    granularity_style,
-                )
-
-            if is_timeline:
-                return _build_timeline_pivot(
-                    conn, where_sql, params, granularity_override, hierarchy
-                ) + (granularity_style,)
-            else:
-                return _build_category_pivot(conn, where_sql, params, hierarchy, column_axis) + (
-                    granularity_style,
-                )
+        # Render outside the lock (pure Python, no DB access needed).
+        if is_timeline:
+            return _render_timeline_pivot(
+                raw, granularity_override, hierarchy
+            ) + (granularity_style,)
+        else:
+            return _render_category_pivot(raw, hierarchy, column_axis) + (
+                granularity_style,
+            )
 
 
-def _build_timeline_pivot(
-    conn: duckdb.DuckDBPyConnection,
+def _query_timeline_pivot(
     where_sql: str,
     params: list[str | float],
     granularity_override: str | None,
     hierarchy: list[str],
-) -> tuple[list, dict]:
-    """Build timeline mode pivot (stacked bar charts).
+) -> dict | None:
+    """Execute DuckDB queries for timeline pivot under the lock.
 
-    The caller MUST hold ``_db_lock`` -- this function executes queries on
-    ``conn`` without acquiring the lock itself.
+    Returns a dict with query results, or None if no data matches.
     """
-    if granularity_override:
-        granularity = granularity_override
-    else:
-        date_query = f"SELECT MIN(end_date), MAX(end_date) FROM breaches {where_sql}"
-        date_row = conn.execute(date_query, params).fetchone()
-        granularity = auto_granularity(str(date_row[0]), str(date_row[1]))
+    with _db_lock:
+        conn = _get_conn()
 
-    trunc_interval = granularity_to_trunc(granularity)
-    bucket_expr = f"DATE_TRUNC('{trunc_interval}', end_date::DATE)"
+        if granularity_override:
+            granularity = granularity_override
+        else:
+            date_query = f"SELECT MIN(end_date), MAX(end_date) FROM breaches {where_sql}"
+            date_row = conn.execute(date_query, params).fetchone()
+            if date_row is None or date_row[0] is None:
+                return None
+            granularity = auto_granularity(str(date_row[0]), str(date_row[1]))
+
+        trunc_interval = granularity_to_trunc(granularity)
+        bucket_expr = f"DATE_TRUNC('{trunc_interval}', end_date::DATE)"
+
+        if hierarchy:
+            hierarchy_cols = ", ".join(f'"{dim}"' for dim in hierarchy)
+            bucket_query = f"""
+                SELECT
+                    {hierarchy_cols},
+                    {bucket_expr} AS time_bucket,
+                    direction,
+                    COUNT(*) AS count
+                FROM breaches
+                {where_sql}
+                GROUP BY {hierarchy_cols}, time_bucket, direction
+                ORDER BY {hierarchy_cols}, time_bucket
+            """
+        else:
+            bucket_query = f"""
+                SELECT
+                    {bucket_expr} AS time_bucket,
+                    direction,
+                    COUNT(*) AS count
+                FROM breaches
+                {where_sql}
+                GROUP BY time_bucket, direction
+                ORDER BY time_bucket
+            """
+
+        result = conn.execute(bucket_query, params)
+        data = _fetchall_dicts(result)
+
+    if not data:
+        return None
+    return {"data": data, "granularity": granularity}
+
+
+def _render_timeline_pivot(
+    raw: dict,
+    granularity_override: str | None,
+    hierarchy: list[str],
+) -> tuple[list, dict]:
+    """Render timeline pivot from pre-fetched data (no DB access)."""
+    data = raw["data"]
+    granularity = raw["granularity"]
 
     if hierarchy:
-        hierarchy_cols = ", ".join(f'"{dim}"' for dim in hierarchy)
-        bucket_query = f"""
-            SELECT
-                {hierarchy_cols},
-                {bucket_expr} AS time_bucket,
-                direction,
-                COUNT(*) AS count
-            FROM breaches
-            {where_sql}
-            GROUP BY {hierarchy_cols}, time_bucket, direction
-            ORDER BY {hierarchy_cols}, time_bucket
-        """
-        bucket_df = conn.execute(bucket_query, params).fetchdf()
-
-        grouped_data = bucket_df.to_dict("records")
-        components = build_hierarchical_pivot(grouped_data, hierarchy, granularity)
-
+        components = build_hierarchical_pivot(data, hierarchy, granularity)
         if not components:
             return [html.Div("No groups to display.")], {"display": "none"}
         return components, {"display": "none"}
     else:
-        bucket_query = f"""
-            SELECT
-                {bucket_expr} AS time_bucket,
-                direction,
-                COUNT(*) AS count
-            FROM breaches
-            {where_sql}
-            GROUP BY time_bucket, direction
-            ORDER BY time_bucket
-        """
-        bucket_df = conn.execute(bucket_query, params).fetchdf()
-
-        bucket_data = bucket_df.to_dict("records")
-        fig = build_timeline_figure(bucket_data, granularity)
-
+        fig = build_timeline_figure(data, granularity)
         return (
             [
                 dcc.Graph(
@@ -561,19 +585,16 @@ def _build_timeline_pivot(
         )
 
 
-def _build_category_pivot(
-    conn: duckdb.DuckDBPyConnection,
+def _query_category_pivot(
     where_sql: str,
     params: list[str | float],
     hierarchy: list[str],
     column_axis: str,
-) -> tuple[list, dict]:
-    """Build category mode pivot (split-color cell tables).
+) -> dict | None:
+    """Execute DuckDB queries for category pivot under the lock.
 
-    The caller MUST hold ``_db_lock`` -- this function executes queries on
-    ``conn`` without acquiring the lock itself.
+    Returns a dict with query results, or None if no data matches.
     """
-    # Quote column_axis for SQL (handles reserved words like "window")
     col_quoted = f'"{column_axis}"'
 
     if hierarchy:
@@ -601,11 +622,25 @@ def _build_category_pivot(
             ORDER BY {col_quoted}
         """
 
-    cat_df = conn.execute(cat_query, params).fetchdf()
+    with _db_lock:
+        conn = _get_conn()
+        result = conn.execute(cat_query, params)
+        data = _fetchall_dicts(result)
 
-    category_data = cat_df.to_dict("records")
+    if not data:
+        return None
+    return {"data": data}
+
+
+def _render_category_pivot(
+    raw: dict,
+    hierarchy: list[str],
+    column_axis: str,
+) -> tuple[list, dict]:
+    """Render category pivot from pre-fetched data (no DB access)."""
+    data = raw["data"]
     components = build_category_table(
-        category_data, column_axis, hierarchy=hierarchy if hierarchy else None
+        data, column_axis, hierarchy=hierarchy if hierarchy else None
     )
 
     # Always include a hidden pivot-timeline-chart so the clickData callback

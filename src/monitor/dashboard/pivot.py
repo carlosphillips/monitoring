@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
+from typing import Any
 
 import plotly.graph_objects as go
 from dash import dcc, html
@@ -15,6 +17,7 @@ from monitor.dashboard.constants import (
     MAX_PIVOT_GROUPS,
     NO_FACTOR_LABEL,
     WEEKLY_THRESHOLD,
+    granularity_to_trunc,
 )
 
 
@@ -33,18 +36,6 @@ def auto_granularity(min_date: str, max_date: str) -> str:
         return "Weekly"
     else:
         return "Monthly"
-
-
-def granularity_to_trunc(granularity: str) -> str:
-    """Map granularity label to DuckDB DATE_TRUNC interval."""
-    mapping = {
-        "Daily": "day",
-        "Weekly": "week",
-        "Monthly": "month",
-        "Quarterly": "quarter",
-        "Yearly": "year",
-    }
-    return mapping.get(granularity, "month")
 
 
 def build_timeline_figure(
@@ -367,7 +358,7 @@ def _build_tree(
 def _render_tree(
     tree: dict,
     hierarchy: list[str],
-    render_leaf_fn: object,
+    render_leaf_fn: Callable[[list[dict], str, str], Any],
     level: int,
 ) -> list:
     """Render a tree as nested html.Details components with expand/collapse.

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dash import html
 
+from monitor.dashboard.constants import granularity_to_trunc
 from monitor.dashboard.pivot import (
     _aggregate_category_cells,
     _build_split_cell,
     _build_tree,
     _format_group_value,
-    granularity_to_trunc,
     _render_category_html_table,
     _render_tree,
     auto_granularity,
@@ -64,8 +64,10 @@ class TestGranularityToTrunc:
     def test_yearly(self):
         assert granularity_to_trunc("Yearly") == "year"
 
-    def test_unknown_defaults_to_month(self):
-        assert granularity_to_trunc("Invalid") == "month"
+    def test_unknown_raises_value_error(self):
+        import pytest
+        with pytest.raises(ValueError, match="Unknown granularity"):
+            granularity_to_trunc("Invalid")
 
 
 class TestBuildTimelineFigure:
