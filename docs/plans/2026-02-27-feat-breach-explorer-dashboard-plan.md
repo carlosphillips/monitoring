@@ -138,24 +138,24 @@ The following gaps were identified during specification analysis and resolved wi
 **Goal**: App skeleton with DuckDB data layer, serving an empty page.
 
 **Tasks:**
-- [ ] Add dashboard dependencies to `pyproject.toml`: `dash>=4.0`, `plotly>=6.5`, `duckdb>=1.4`, `dash-bootstrap-components>=2.0`
-- [ ] Clean up stale `__pycache__/` in `src/monitor/dashboard/`
-- [ ] Create `src/monitor/dashboard/__init__.py` with `create_app()` export
-- [ ] Create `src/monitor/dashboard/constants.py`:
+- [x] Add dashboard dependencies to `pyproject.toml`: `dash>=4.0`, `plotly>=6.5`, `duckdb>=1.4`, `dash-bootstrap-components>=2.0`
+- [x] Clean up stale `__pycache__/` in `src/monitor/dashboard/`
+- [x] Create `src/monitor/dashboard/__init__.py` with `create_app()` export
+- [x] Create `src/monitor/dashboard/constants.py`:
   - Dimension enums/constants (PORTFOLIO, LAYER, FACTOR, WINDOW, DIRECTION, TIME)
   - Color constants: `COLOR_LOWER = "#d62728"`, `COLOR_UPPER = "#1f77b4"`
   - Default page size, time bucket thresholds
-- [ ] Create `src/monitor/dashboard/data.py`:
+- [x] Create `src/monitor/dashboard/data.py`:
   - `load_breaches(output_dir: str) -> duckdb.DuckDBPyConnection` -- scan all `output/*/breaches.csv`, add `portfolio` column from directory name, derive `direction`, `distance`, `abs_value`; load into DuckDB in-memory table
   - `query_attributions(conn, portfolio, window, end_dates, layer, factor) -> pd.DataFrame` -- on-demand parquet query for attribution enrichment
   - NaN/Inf validation on loaded data (per institutional learning from `docs/solutions/logic-errors/nan-inf-silent-data-corruption-parquet.md`)
-- [ ] Create `src/monitor/dashboard/app.py`:
+- [x] Create `src/monitor/dashboard/app.py`:
   - Dash app factory using Bootstrap theme
   - CLI entry point: add `dashboard` Click subcommand to `src/monitor/cli.py` (consistent with existing CLI structure)
   - Accept `--output` dir and `--port` arguments
   - Note: data is loaded once at startup; restart the dashboard to pick up new `output/` data
-- [ ] Create `tests/test_dashboard/conftest.py` with fixtures for sample breach CSV and parquet files
-- [ ] Create `tests/test_dashboard/test_data.py` -- test breach loading, computed columns, attribution queries
+- [x] Create `tests/test_dashboard/conftest.py` with fixtures for sample breach CSV and parquet files
+- [x] Create `tests/test_dashboard/test_data.py` -- test breach loading, computed columns, attribution queries
 
 **Files:**
 - `pyproject.toml` (edit)

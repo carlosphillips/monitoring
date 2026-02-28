@@ -1,0 +1,170 @@
+"""DuckDB data layer: load breaches, query attributions."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import duckdb
+import numpy as np
+import pandas as pd
+
+from monitor.dashboard.constants import NO_FACTOR_LABEL
+
+logger = logging.getLogger(__name__)
+
+
+def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
+    """Load all breach CSVs into an in-memory DuckDB table.
+
+    Scans ``output/*/breaches.csv``, adds computed columns:
+    - ``portfolio``: extracted from the directory name
+    - ``direction``: 'upper' if value > threshold_max, 'lower' if value < threshold_min
+    - ``distance``: absolute distance from breached threshold (always positive)
+    - ``abs_value``: abs(value)
+
+    Returns a DuckDB connection with a ``breaches`` table registered.
+    """
+    output_path = Path(output_dir)
+    if not output_path.is_dir():
+        raise FileNotFoundError(f"Output directory not found: {output_path}")
+
+    # Find all breach CSV files
+    csv_files = sorted(output_path.glob("*/breaches.csv"))
+    if not csv_files:
+        raise FileNotFoundError(f"No breaches.csv files found in {output_path}/*/")
+
+    conn = duckdb.connect(":memory:")
+
+    # Load each CSV, adding the portfolio column from the parent directory name
+    frames: list[pd.DataFrame] = []
+    for csv_path in csv_files:
+        portfolio_name = csv_path.parent.name
+        df = pd.read_csv(csv_path, dtype={"factor": str})
+        df["portfolio"] = portfolio_name
+        frames.append(df)
+
+    combined = pd.concat(frames, ignore_index=True)
+
+    # Validate for NaN/Inf in numeric columns
+    numeric_cols = combined.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols):
+        if combined[numeric_cols].isin([np.inf, -np.inf]).any().any():
+            logger.warning("Inf values detected in breach data")
+        if combined[numeric_cols].isna().any().any():
+            logger.warning("NaN values detected in breach data (expected for nullable thresholds)")
+
+    # Register the raw dataframe, then create the breaches table with computed columns
+    conn.register("raw_breaches", combined)
+    conn.execute("""
+        CREATE TABLE breaches AS
+        SELECT
+            *,
+            CASE
+                WHEN threshold_max IS NOT NULL AND value > threshold_max THEN 'upper'
+                WHEN threshold_min IS NOT NULL AND value < threshold_min THEN 'lower'
+            END AS direction,
+            CASE
+                WHEN threshold_max IS NOT NULL AND value > threshold_max
+                    THEN value - threshold_max
+                WHEN threshold_min IS NOT NULL AND value < threshold_min
+                    THEN threshold_min - value
+                ELSE 0.0
+            END AS distance,
+            ABS(value) AS abs_value
+        FROM raw_breaches
+    """)
+    conn.unregister("raw_breaches")
+
+    row_count = conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
+    logger.info("Loaded %d breaches from %d portfolios", row_count, len(csv_files))
+
+    return conn
+
+
+def query_attributions(
+    conn: duckdb.DuckDBPyConnection,
+    output_dir: str | Path,
+    portfolio: str,
+    window: str,
+    end_dates: list[str],
+    layer: str,
+    factor: str | None,
+) -> pd.DataFrame:
+    """Query attribution data from parquet files for breach enrichment.
+
+    For a set of breaches identified by (portfolio, window, end_dates, layer, factor),
+    reads the appropriate parquet file and extracts contribution and avg_exposure.
+
+    Returns a DataFrame with columns: end_date, contribution, avg_exposure.
+    """
+    output_path = Path(output_dir)
+    parquet_path = output_path / portfolio / "attributions" / f"{window}_attribution.parquet"
+
+    if not parquet_path.exists():
+        logger.warning("Attribution parquet not found: %s", parquet_path)
+        return pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
+
+    # Determine column names based on layer/factor
+    if factor is None or factor == "" or factor == NO_FACTOR_LABEL:
+        contrib_col = "residual"
+        exposure_col = None  # No avg_exposure for residual
+    else:
+        contrib_col = f"{layer}_{factor}"
+        exposure_col = f"{layer}_{factor}_avg_exposure"
+
+    try:
+        # Build SELECT clause
+        select_cols = ["end_date", f'"{contrib_col}" AS contribution']
+        if exposure_col:
+            select_cols.append(f'"{exposure_col}" AS avg_exposure')
+        else:
+            select_cols.append("NULL AS avg_exposure")
+
+        select_clause = ", ".join(select_cols)
+
+        # Build date filter
+        date_list = ", ".join(f"'{d}'" for d in end_dates)
+
+        query = f"""
+            SELECT {select_clause}
+            FROM read_parquet('{parquet_path}')
+            WHERE CAST(end_date AS VARCHAR) IN ({date_list})
+        """
+        result = conn.execute(query).fetchdf()
+        result["end_date"] = result["end_date"].astype(str)
+        return result
+
+    except duckdb.Error as e:
+        logger.warning("Error querying attribution parquet %s: %s", parquet_path, e)
+        return pd.DataFrame(columns=["end_date", "contribution", "avg_exposure"])
+
+
+def get_filter_options(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
+    """Get available filter values from the unfiltered dataset.
+
+    Returns a dict mapping dimension names to their unique values.
+    Only includes values that have at least one breach.
+    """
+    options: dict[str, list[str]] = {}
+
+    for dim in ["portfolio", "layer", "window", "direction"]:
+        rows = conn.execute(
+            f'SELECT DISTINCT "{dim}" FROM breaches ORDER BY "{dim}"'
+        ).fetchall()
+        options[dim] = [str(r[0]) for r in rows if r[0] is not None]
+
+    # Factor needs special handling for NULL/empty values
+    rows = conn.execute(
+        'SELECT DISTINCT COALESCE(NULLIF("factor", \'\'), NULL) AS factor '
+        "FROM breaches ORDER BY factor"
+    ).fetchall()
+    factor_values = []
+    for r in rows:
+        if r[0] is None or r[0] == "":
+            factor_values.append(NO_FACTOR_LABEL)
+        else:
+            factor_values.append(str(r[0]))
+    options["factor"] = factor_values
+
+    return options

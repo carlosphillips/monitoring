@@ -18,7 +18,25 @@ from monitor.windows import WINDOWS, slice_window
 logger = logging.getLogger("monitor")
 
 
-@click.command()
+class _DefaultGroup(click.Group):
+    """Click group that falls back to 'run' when no known subcommand is given."""
+
+    default_cmd_name = "run"
+
+    def parse_args(self, ctx, args):
+        # If args are empty or the first arg is not a known subcommand,
+        # prepend the default subcommand so options like --input are routed correctly.
+        if not args or args[0] not in self.commands:
+            args = [self.default_cmd_name] + list(args)
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=_DefaultGroup)
+def main():
+    """Monitor portfolio factor exposures against configurable thresholds."""
+
+
+@main.command()
 @click.option(
     "--input", "input_dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
@@ -42,8 +60,8 @@ logger = logging.getLogger("monitor")
     default=True,
     help="Write per-window parquet attribution and breach files.",
 )
-def main(input_dir: Path, thresholds_dir: Path | None, output_dir: Path, parquet: bool) -> None:
-    """Monitor portfolio factor exposures against configurable thresholds."""
+def run(input_dir: Path, thresholds_dir: Path | None, output_dir: Path, parquet: bool) -> None:
+    """Run the monitoring pipeline."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(message)s",
@@ -147,3 +165,36 @@ def main(input_dir: Path, thresholds_dir: Path | None, output_dir: Path, parquet
 
     if errors:
         sys.exit(1)
+
+
+@main.command()
+@click.option(
+    "--output", "output_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default="./output",
+    help="Output directory containing breach data",
+)
+@click.option(
+    "--port",
+    type=int,
+    default=8050,
+    help="Port to serve the dashboard on",
+)
+@click.option(
+    "--debug/--no-debug",
+    default=False,
+    help="Run in debug mode with hot-reloading",
+)
+def dashboard(output_dir: Path, port: int, debug: bool) -> None:
+    """Launch the Breach Explorer Dashboard."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
+    from monitor.dashboard import create_app
+
+    app = create_app(output_dir)
+    logger.info("Starting Breach Explorer Dashboard on http://localhost:%d", port)
+    app.run(port=port, debug=debug)
