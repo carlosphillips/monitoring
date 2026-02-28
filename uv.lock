@@ -338,16 +338,20 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "dash" },
-    { name = "dash-bootstrap-components" },
-    { name = "duckdb" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "pandas" },
-    { name = "plotly" },
     { name = "pyarrow" },
     { name = "python-dateutil" },
     { name = "pyyaml" },
+]
+
+[package.optional-dependencies]
+dashboard = [
+    { name = "dash" },
+    { name = "dash-bootstrap-components" },
+    { name = "duckdb" },
+    { name = "plotly" },
 ]
 
 [package.dev-dependencies]
@@ -359,17 +363,18 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "dash", specifier = ">=4.0" },
-    { name = "dash-bootstrap-components", specifier = ">=2.0" },
-    { name = "duckdb", specifier = ">=1.4" },
+    { name = "dash", marker = "extra == 'dashboard'", specifier = ">=4.0" },
+    { name = "dash-bootstrap-components", marker = "extra == 'dashboard'", specifier = ">=2.0" },
+    { name = "duckdb", marker = "extra == 'dashboard'", specifier = ">=1.4" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pandas", specifier = ">=2.0" },
-    { name = "plotly", specifier = ">=6.5" },
+    { name = "plotly", marker = "extra == 'dashboard'", specifier = ">=6.5" },
     { name = "pyarrow", specifier = ">=14.0.1" },
     { name = "python-dateutil", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
+provides-extras = ["dashboard"]
 
 [package.metadata.requires-dev]
 dev = [
