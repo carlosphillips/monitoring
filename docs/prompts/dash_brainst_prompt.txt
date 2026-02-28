@@ -1,0 +1,15 @@
+Dashboard ideas
+
+I want add a dashboard that allows risk managers visualizes the breaches filtered and grouped along multiple dimensions. I’m imagining two main views, a top Pivot view and a bottom Detail view.
+
+The Pivot view shows visualizations of the breaches grouped and filtered according to user settings. The bottom view shows further information about the filtered views in the Pivot view further filtered by the selections in that view.   
+
+At the start, the user is presented with a set of filter controls for the various dimensions and a pop-up to select the column grouping, which is set to Time by default (all dimensions are capitalized in the dashboard).
+
+This shows a timeline graph with breaches both upper and under shown for every date. The lower breaches are in red and the blue breaches are stacked above in blue. 
+
+Research what is the best control to set the hierarchical grouping of dimensions. I would like one of those. Then if a hierarchy is defined, we would have one timeline per grouping ordered like the hierarchy and text to the top left of the timeline showing the grouping for the timeline. There should be little triangles to show and hide parts of the hierarchy. So, for example, if the hierarchy from top to bottom is layers, then factors. The user might expand the tactical layer and leave the other ones collapsed. Within tactical section of the visual, We would see a different row for each factor. 
+
+If the column grouping is another dimension, show a different visual instead of a timeline. This visual should be horizontal, similar to a timeline, but intuitively represent the grouping. Maybe some sort of table would work with red and blue numbers or with cells that are split in two to show the red and blue counts. If we use text instead of a graph to show the breach counts, maybe we should use conditional formatting to show where the hotspots are.
+
+The Detail view will for now be an interactive, filterable, sortable table with the details for all of the breaches that are filtered and selected in the Pivot view.
