@@ -101,14 +101,38 @@ class DuckDBConnector:
             raise
 
     def _create_indexes(self) -> None:
-        """Create indexes on frequently-filtered columns."""
+        """Create indexes on frequently-filtered columns and composite filters."""
         try:
-            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_breach_portfolio ON breaches(portfolio)")
-            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_breach_date ON breaches(end_date)")
-            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_breach_layer ON breaches(layer)")
-            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attr_portfolio ON attributions(portfolio)")
-            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attr_date ON attributions(end_date)")
-            logger.info("Created indexes on portfolio and date columns")
+            # Single-column indexes
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_breach_portfolio ON breaches(portfolio)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_breach_date ON breaches(end_date)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_breach_layer ON breaches(layer)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attr_portfolio ON attributions(portfolio)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_attr_date ON attributions(end_date)"
+            )
+
+            # Composite index for common filter combinations
+            self.conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_breach_filter
+                   ON breaches(portfolio, end_date, layer, factor, window)"""
+            )
+
+            # Update table statistics for query optimizer
+            self.conn.execute("ANALYZE TABLE breaches")
+            self.conn.execute("ANALYZE TABLE attributions")
+
+            logger.info(
+                "Created single-column and composite indexes; table statistics updated"
+            )
         except duckdb.Error as e:
             logger.warning("Failed to create indexes: %s (continuing without indexes)", e)
 

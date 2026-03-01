@@ -10,8 +10,9 @@ and accessibility features (hover data, ARIA labels).
 
 from __future__ import annotations
 
+import html as html_module
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # VISUALIZATION CONFIGURATION
 # =============================================================================
+
+MAX_GROUPS_PER_PAGE = 50  # Cap subplots to prevent performance degradation
+MAX_POINTS_PER_GROUP = 100  # Decimation target for per-group timelines
 
 BREACH_COLORS = {
     "upper": "rgba(0, 102, 204, 0.7)",  # Professional blue
@@ -161,6 +165,17 @@ def build_synchronized_timelines(
 
     n_groups = len(groups)
 
+    # Cap to MAX_GROUPS_PER_PAGE to prevent performance degradation
+    if n_groups > MAX_GROUPS_PER_PAGE:
+        logger.warning(
+            "Too many groups (%d); showing first %d. "
+            "Consider further filtering or adjusting hierarchy.",
+            n_groups,
+            MAX_GROUPS_PER_PAGE,
+        )
+        groups = groups[:MAX_GROUPS_PER_PAGE]
+        n_groups = MAX_GROUPS_PER_PAGE
+
     if n_groups == 0:
         return empty_figure("No data for selected hierarchy")
 
@@ -193,6 +208,9 @@ def build_synchronized_timelines(
             # Aggregate by end_date
             agg = dir_data.groupby("end_date")["breach_count"].sum().reset_index()
             agg = agg.sort_values("end_date")
+
+            # Apply decimation per group to max points
+            agg = decimated_data(agg, max_points=MAX_POINTS_PER_GROUP)
 
             color = BREACH_COLORS[direction]
 
@@ -302,13 +320,21 @@ def build_split_cell_table(
     df["upper_display"] = df["upper_breaches"].astype(str)
     df["lower_display"] = df["lower_breaches"].astype(str)
 
-    # Calculate background colors
-    df["upper_color"] = df["upper_breaches"].apply(
-        lambda x: f"rgba(0, 102, 204, {0.2 + (x / max_count) * 0.7:.2f})" if max_count > 0 else "rgba(0, 102, 204, 0.1)"
-    )
-    df["lower_color"] = df["lower_breaches"].apply(
-        lambda x: f"rgba(204, 0, 0, {0.2 + (x / max_count) * 0.7:.2f})" if max_count > 0 else "rgba(204, 0, 0, 0.1)"
-    )
+    # Calculate background colors based on intensity
+    def color_intensity_upper(x):
+        if max_count > 0:
+            opacity = 0.2 + (x / max_count) * 0.7
+            return f"rgba(0, 102, 204, {opacity:.2f})"
+        return "rgba(0, 102, 204, 0.1)"
+
+    def color_intensity_lower(x):
+        if max_count > 0:
+            opacity = 0.2 + (x / max_count) * 0.7
+            return f"rgba(204, 0, 0, {opacity:.2f})"
+        return "rgba(204, 0, 0, 0.1)"
+
+    df["upper_color"] = df["upper_breaches"].apply(color_intensity_upper)
+    df["lower_color"] = df["lower_breaches"].apply(color_intensity_lower)
 
     return df.sort_values(list(state.hierarchy_dimensions), ascending=True)
 
@@ -316,11 +342,13 @@ def build_split_cell_table(
 def format_split_cell_html(df: pd.DataFrame) -> str:
     """Convert split-cell DataFrame to HTML table with conditional formatting.
 
+    Escapes all user-facing data to prevent XSS attacks.
+
     Args:
         df: DataFrame from build_split_cell_table()
 
     Returns:
-        HTML string for Dash html.Div
+        HTML string for Dash html.Div (with escaped content)
     """
     if df.empty:
         return "<p>No data available</p>"
@@ -332,7 +360,9 @@ def format_split_cell_html(df: pd.DataFrame) -> str:
     html_parts.append("<thead><tr style='background-color: #f5f5f5;'>")
     for col in df.columns:
         if col not in ["upper_color", "lower_color"]:
-            html_parts.append(f"<th style='border: 1px solid #ddd; padding: 8px;'>{col}</th>")
+            # Escape column names to prevent XSS
+            safe_col = html_module.escape(str(col))
+            html_parts.append(f"<th style='border: 1px solid #ddd; padding: 8px;'>{safe_col}</th>")
     html_parts.append("</tr></thead>")
 
     # Data rows with conditional coloring
@@ -345,13 +375,23 @@ def format_split_cell_html(df: pd.DataFrame) -> str:
                 continue
 
             if col == "upper_breaches":
-                style = f"background-color: {row['upper_color']}; border: 1px solid #ddd; padding: 8px; text-align: center;"
+                bg_color = row["upper_color"]
+                style = (
+                    f"background-color: {bg_color}; border: 1px solid #ddd; "
+                    "padding: 8px; text-align: center;"
+                )
             elif col == "lower_breaches":
-                style = f"background-color: {row['lower_color']}; border: 1px solid #ddd; padding: 8px; text-align: center;"
+                bg_color = row["lower_color"]
+                style = (
+                    f"background-color: {bg_color}; border: 1px solid #ddd; "
+                    "padding: 8px; text-align: center;"
+                )
             else:
                 style = "border: 1px solid #ddd; padding: 8px;"
 
-            html_parts.append(f"<td style='{style}'>{row[col]}</td>")
+            # Escape cell values to prevent XSS
+            safe_value = html_module.escape(str(row[col]))
+            html_parts.append(f"<td style='{style}'>{safe_value}</td>")
 
         html_parts.append("</tr>")
 

@@ -14,28 +14,31 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Any, Optional
+from typing import Any
 
 import dash
 import pandas as pd
 from dash import callback, dcc, html
 from dash.dependencies import Input, Output, State
 
+try:
+    import dash_ag_grid as dag
+    AG_GRID_AVAILABLE = True
+except ImportError:
+    AG_GRID_AVAILABLE = False
+
 from monitor.dashboard.db import get_db
-from monitor.dashboard.dimensions import DIMENSIONS
 from monitor.dashboard.query_builder import (
     BreachQuery,
-    FilterSpec,
-    TimeSeriesAggregator,
     CrossTabAggregator,
     DrillDownQuery,
+    FilterSpec,
+    TimeSeriesAggregator,
 )
 from monitor.dashboard.state import DashboardState
 from monitor.dashboard.visualization import (
-    build_synchronized_timelines,
     build_split_cell_table,
-    format_split_cell_html,
-    empty_figure,
+    build_synchronized_timelines,
 )
 
 logger = logging.getLogger(__name__)
@@ -459,13 +462,14 @@ def register_visualization_callbacks(app) -> None:
 
         Builds split-cell table with upper/lower breach counts,
         conditional formatting based on count intensity.
+        Uses AG Grid for virtualized rendering when available.
 
         Args:
             breach_data: Query results with crosstab_data
             state_json: Dashboard state
 
         Returns:
-            Div containing formatted HTML table
+            Div containing formatted table (AG Grid or HTML fallback)
         """
         if not breach_data or not breach_data.get("crosstab_data"):
             return html.Div(
@@ -486,49 +490,12 @@ def register_visualization_callbacks(app) -> None:
                     id="table-container",
                 )
 
-            # Build table as Dash HTML components
-            # Header row
-            header_cells = [html.Th(col, style={"border": "1px solid #ddd", "padding": "8px"})
-                           for col in df_table.columns if col not in ["upper_color", "lower_color"]]
-
-            # Data rows with conditional coloring
-            table_rows = []
-            for _, row in df_table.iterrows():
-                row_cells = []
-                for col in df_table.columns:
-                    if col in ["upper_color", "lower_color"]:
-                        continue
-
-                    if col == "upper_breaches":
-                        style = {
-                            "backgroundColor": row["upper_color"],
-                            "border": "1px solid #ddd",
-                            "padding": "8px",
-                            "textAlign": "center",
-                        }
-                    elif col == "lower_breaches":
-                        style = {
-                            "backgroundColor": row["lower_color"],
-                            "border": "1px solid #ddd",
-                            "padding": "8px",
-                            "textAlign": "center",
-                        }
-                    else:
-                        style = {"border": "1px solid #ddd", "padding": "8px"}
-
-                    row_cells.append(html.Td(str(row[col]), style=style))
-
-                table_rows.append(html.Tr(row_cells))
-
-            table = html.Table(
-                [
-                    html.Thead(html.Tr(header_cells), style={"backgroundColor": "#f5f5f5"}),
-                    html.Tbody(table_rows),
-                ],
-                style={"borderCollapse": "collapse", "width": "100%"},
-            )
-
-            return html.Div([table], id="table-container")
+            # Use AG Grid if available (virtualized rendering for performance)
+            if AG_GRID_AVAILABLE:
+                return _render_table_ag_grid(df_table)
+            else:
+                # Fallback to HTML table
+                return _render_table_html(df_table)
 
         except Exception as e:
             logger.error("Error rendering table: %s", e)
@@ -536,6 +503,121 @@ def register_visualization_callbacks(app) -> None:
                 [html.Div(f"Error rendering table: {str(e)}", style={"padding": "20px", "color": "red"})],
                 id="table-container",
             )
+
+    def _render_table_ag_grid(df_table: pd.DataFrame) -> html.Div:
+        """Render table using AG Grid for virtualized rendering.
+
+        AG Grid handles large datasets efficiently with virtual scrolling
+        and minimal DOM footprint.
+
+        Args:
+            df_table: DataFrame with columns including upper_color, lower_color
+
+        Returns:
+            Div containing AG Grid component
+        """
+        # Prepare row data (convert to list of dicts)
+        row_data = df_table.to_dict("records")
+
+        # Build column definitions
+        column_defs = []
+        for col in df_table.columns:
+            if col in ["upper_color", "lower_color"]:
+                # Skip color columns (used only for styling)
+                continue
+
+            col_def = {
+                "field": col,
+                "headerName": col.replace("_", " ").title(),
+            }
+
+            # Add custom styling for breach count columns
+            if col == "upper_breaches":
+                col_def["cellStyle"] = {
+                    "function": "(params) => ({ backgroundColor: params.data.upper_color })"
+                }
+            elif col == "lower_breaches":
+                col_def["cellStyle"] = {
+                    "function": "(params) => ({ backgroundColor: params.data.lower_color })"
+                }
+
+            column_defs.append(col_def)
+
+        # Create AG Grid component
+        return html.Div(
+            [
+                dag.AgGrid(
+                    id="breach-table-grid",
+                    rowData=row_data,
+                    columnDefs=column_defs,
+                    defaultColDef={"resizable": True, "sortable": True, "filter": True},
+                    style={"height": "600px", "width": "100%"},
+                    dashGridOptions={"pagination": True, "paginationPageSize": 50},
+                )
+            ],
+            id="table-container",
+        )
+
+    def _render_table_html(df_table: pd.DataFrame) -> html.Div:
+        """Render table using HTML components (fallback when AG Grid unavailable).
+
+        Escapes all data to prevent XSS attacks.
+
+        Args:
+            df_table: DataFrame with columns including upper_color, lower_color
+
+        Returns:
+            Div containing HTML table with escaped content
+        """
+        from html import escape
+
+        # Header row
+        header_cells = [
+            html.Th(escape(str(col)), style={"border": "1px solid #ddd", "padding": "8px"})
+            for col in df_table.columns
+            if col not in ["upper_color", "lower_color"]
+        ]
+
+        # Data rows with conditional coloring
+        table_rows = []
+        for _, row in df_table.iterrows():
+            row_cells = []
+            for col in df_table.columns:
+                if col in ["upper_color", "lower_color"]:
+                    continue
+
+                if col == "upper_breaches":
+                    style = {
+                        "backgroundColor": row["upper_color"],
+                        "border": "1px solid #ddd",
+                        "padding": "8px",
+                        "textAlign": "center",
+                    }
+                elif col == "lower_breaches":
+                    style = {
+                        "backgroundColor": row["lower_color"],
+                        "border": "1px solid #ddd",
+                        "padding": "8px",
+                        "textAlign": "center",
+                    }
+                else:
+                    style = {"border": "1px solid #ddd", "padding": "8px"}
+
+                # Escape cell value to prevent XSS
+                safe_value = escape(str(row[col]))
+                row_cells.append(html.Td(safe_value, style=style))
+
+            table_rows.append(html.Tr(row_cells))
+
+        table = html.Table(
+            [
+                html.Thead(html.Tr(header_cells), style={"backgroundColor": "#f5f5f5"}),
+                html.Tbody(table_rows),
+            ],
+            style={"borderCollapse": "collapse", "width": "100%"},
+        )
+
+        return html.Div([table], id="table-container")
 
     @callback(
         Output("app-state", "data"),
