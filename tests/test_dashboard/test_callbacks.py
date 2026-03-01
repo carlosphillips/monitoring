@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from monitor.dashboard.callbacks import (
+    HISTORY_STACK_MAX,
     _build_selected_cells_set,
     _get_available_dimensions,
     _get_column_axis_options,
@@ -700,8 +701,28 @@ class TestExtractBrushRange:
         assert result is no_update
 
 
+class TestHistoryStackMax:
+    """Tests for HISTORY_STACK_MAX constant."""
+
+    def test_max_is_positive(self):
+        assert HISTORY_STACK_MAX > 0
+
+    def test_max_is_20(self):
+        assert HISTORY_STACK_MAX == 20
+
+
 class TestCallbacksIntegration:
     """Test callbacks using the Dash test client."""
+
+    def test_app_has_apply_and_back_buttons(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        layout_str = str(app.layout)
+        assert "apply-brush-btn" in layout_str
+        assert "back-btn" in layout_str
+        assert "back-btn-badge" in layout_str
+        assert "filter-history-stack-store" in layout_str
 
     def test_app_creates_with_layout(self, sample_output):
         from monitor.dashboard.app import create_app

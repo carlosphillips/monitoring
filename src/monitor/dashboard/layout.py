@@ -38,6 +38,8 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
             dcc.Store(id="group-header-filter-store", data=None),
             dcc.Store(id="modifier-key-store", data={"shift": False, "ctrl": False}),
             dcc.Store(id="pivot-selection-anchor-store", data=None),
+            dcc.Store(id="brush-range-store", data=None),
+            dcc.Store(id="filter-history-stack-store", data=[]),
             # Header
             dbc.Navbar(
                 dbc.Container(
@@ -163,6 +165,41 @@ def _build_filter_bar(
                                     className="mt-1",
                                 ),
                             ],
+                            md=2,
+                        ),
+                        # Apply / Back buttons
+                        dbc.Col(
+                            html.Div(
+                                [
+                                    dbc.Button(
+                                        "Apply selection",
+                                        id="apply-brush-btn",
+                                        size="sm",
+                                        color="primary",
+                                        outline=True,
+                                        disabled=True,
+                                        className="me-2",
+                                    ),
+                                    dbc.Button(
+                                        [
+                                            "Back ",
+                                            dbc.Badge(
+                                                id="back-btn-badge",
+                                                children="",
+                                                color="light",
+                                                text_color="primary",
+                                                className="ms-1",
+                                            ),
+                                        ],
+                                        id="back-btn",
+                                        size="sm",
+                                        color="secondary",
+                                        outline=True,
+                                        disabled=True,
+                                    ),
+                                ],
+                                className="mt-3",
+                            ),
                             md=2,
                         ),
                     ],

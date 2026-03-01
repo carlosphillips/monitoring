@@ -44,6 +44,9 @@ _db_lock = threading.Lock()
 # We fetch one extra row to detect truncation without a separate COUNT query.
 DETAIL_TABLE_MAX_ROWS = 1000
 
+# Maximum number of entries in the filter history back stack.
+HISTORY_STACK_MAX = 20
+
 # Maximum number of rows in a CSV export.  Bounds memory usage and lock
 # hold time so a single export cannot starve other dashboard callbacks.
 CSV_EXPORT_MAX_ROWS = 100_000
@@ -679,6 +682,96 @@ def register_callbacks(app: dash.Dash) -> None:
                 if data:
                     return _extract_brush_range(data)
         return no_update
+
+    # --- Apply / Back callbacks ---
+
+    @app.callback(
+        Output("apply-brush-btn", "disabled"),
+        Input("brush-range-store", "data"),
+    )
+    def toggle_apply_button(brush_range):
+        """Enable Apply button when a brush range exists."""
+        return not bool(brush_range)
+
+    @app.callback(
+        Output("filter-date-range", "start_date", allow_duplicate=True),
+        Output("filter-date-range", "end_date", allow_duplicate=True),
+        Output("brush-range-store", "data", allow_duplicate=True),
+        Output("filter-history-stack-store", "data", allow_duplicate=True),
+        Input("apply-brush-btn", "n_clicks"),
+        State("brush-range-store", "data"),
+        State("filter-date-range", "start_date"),
+        State("filter-date-range", "end_date"),
+        State("group-header-filter-store", "data"),
+        State("pivot-selection-store", "data"),
+        State("filter-history-stack-store", "data"),
+        prevent_initial_call=True,
+    )
+    def apply_brush(
+        n_clicks, brush_range,
+        current_start, current_end,
+        group_filter, pivot_selection, history_stack,
+    ):
+        """Apply brush range to date filters and push current state to history."""
+        if not n_clicks or not brush_range:
+            return no_update, no_update, no_update, no_update
+
+        start = brush_range.get("start")
+        end = brush_range.get("end")
+        if not start or not end:
+            return no_update, no_update, no_update, no_update
+
+        # Push current state onto the history stack
+        snapshot = {
+            "start_date": current_start,
+            "end_date": current_end,
+            "group_filter": group_filter,
+            "cell_selection": pivot_selection,
+        }
+        stack = list(history_stack or [])
+        stack.append(snapshot)
+        # Enforce max stack size
+        if len(stack) > HISTORY_STACK_MAX:
+            stack = stack[-HISTORY_STACK_MAX:]
+
+        return start, end, None, stack
+
+    @app.callback(
+        Output("back-btn", "disabled"),
+        Output("back-btn-badge", "children"),
+        Input("filter-history-stack-store", "data"),
+    )
+    def toggle_back_button(history_stack):
+        """Enable Back button and show depth when history exists."""
+        depth = len(history_stack) if history_stack else 0
+        disabled = depth == 0
+        badge_text = str(depth) if depth > 0 else ""
+        return disabled, badge_text
+
+    @app.callback(
+        Output("filter-date-range", "start_date", allow_duplicate=True),
+        Output("filter-date-range", "end_date", allow_duplicate=True),
+        Output("group-header-filter-store", "data", allow_duplicate=True),
+        Output("pivot-selection-store", "data", allow_duplicate=True),
+        Output("filter-history-stack-store", "data", allow_duplicate=True),
+        Input("back-btn", "n_clicks"),
+        State("filter-history-stack-store", "data"),
+        prevent_initial_call=True,
+    )
+    def pop_history(n_clicks, history_stack):
+        """Pop the most recent state from the history stack and restore it."""
+        if not n_clicks or not history_stack:
+            return no_update, no_update, no_update, no_update, no_update
+
+        stack = list(history_stack)
+        snapshot = stack.pop()
+        return (
+            snapshot.get("start_date"),
+            snapshot.get("end_date"),
+            snapshot.get("group_filter"),
+            snapshot.get("cell_selection", []),
+            stack,
+        )
 
     # --- Expand state callbacks ---
 
