@@ -1,0 +1,9 @@
+Okay, I want to build an asset management portfolio monitor. The monitor should represent the overall exposures of the portfolio in layers, each layer built on top of the other, adding active factor exposures on top of all of the layers below it.
+
+For example, you might start with a portfolio that has a benchmark layer for all of the exposures that come from the benchmark. On top of that you would have a structural layer that covers the exposures that come from the mandate. On top of that you would have a tactical layer that includes all of the exposures the portfolio manager has made actively above and beyond the exposures of the layers below it. Finally, there would be a residual return, which is the return of the portfolio unexplained by the combination of all these layers.
+
+I would like to be able to assign thresholds for every single cell in the table that is the cross between the factors and the different layers. For example, I’d like to say that the return of the tactical layer for the high‑minus‑low value factor should not be more than 1% and should not be less than –1%. I also want to put a threshold on the residual so that we can identify when the portfolio is breaching any of these.
+
+The threshold should be assignable for different periods, with separate thresholds for daily, monthly, quarterly, annual, and maybe three‑year windows. They should be interpreted as sliding windows; for example, the one‑year threshold should be applied to a sliding one‑year window.
+
+I want this project to be a UV Python project. So always use UV to run any of the scripts, and all of the coding should be done in Python.
