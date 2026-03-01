@@ -1,9 +1,22 @@
-"""DuckDB data layer: load breaches into an in-memory DuckDB table."""
+"""DuckDB data layer: load consolidated breach parquets into DuckDB.
+
+This module provides functions for loading the consolidated breaches parquet file
+(all_breaches.parquet) into a DuckDB table with computed columns for analysis.
+
+All data loading is parquet-based; CSV files are no longer used.
+
+Key Functions:
+- load_breaches(): Load parquet and create table with computed columns
+- get_filter_options(): Get available dimension values from unfiltered data
+
+Note: For new code, use AnalyticsContext from analytics_context.py instead of
+calling these functions directly. AnalyticsContext provides a higher-level API
+with better thread-safety and filtering capabilities.
+"""
 
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 import duckdb
@@ -14,44 +27,50 @@ logger = logging.getLogger(__name__)
 
 
 def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
-    """Load all breach CSVs into an in-memory DuckDB table.
+    """Load consolidated breaches parquet into an in-memory DuckDB table.
 
-    Scans ``output/*/breaches.csv``, adds computed columns:
-    - ``portfolio``: extracted from the directory name
-    - ``direction``: 'upper' if value > threshold_max, 'lower' if value < threshold_min
-    - ``distance``: absolute distance from breached threshold (always positive)
-    - ``abs_value``: abs(value)
+    Loads the consolidated parquet file (all_breaches.parquet) which is created
+    by the CLI 'monitor run' command. This file contains breach data from all
+    portfolios with the following columns:
+    - end_date: Date of the breach record
+    - portfolio: Portfolio name
+    - layer: Layer (e.g., 'tactical', 'strategic')
+    - factor: Factor name (empty string for residual/no-factor)
+    - window: Window name (daily, monthly, quarterly, annual, 3-year)
+    - value: Contribution value
+    - threshold_min: Lower threshold (nullable)
+    - threshold_max: Upper threshold (nullable)
 
-    Returns a DuckDB connection with a ``breaches`` table registered.
+    This function adds computed columns:
+    - direction: 'upper' if value > threshold_max, 'lower' if value < threshold_min, 'unknown' otherwise
+    - distance: Absolute distance from breached threshold (0 if not breached)
+    - abs_value: Absolute value of contribution
+
+    Args:
+        output_dir: Root output directory (typically './output')
+
+    Returns:
+        DuckDB connection with 'breaches' table and computed columns
+
+    Raises:
+        FileNotFoundError: If output_dir or all_breaches.parquet not found
     """
     output_path = Path(output_dir)
     if not output_path.is_dir():
         raise FileNotFoundError(f"Output directory not found: {output_path}")
 
-    # Find all breach CSV files
-    csv_files = sorted(output_path.glob("*/breaches.csv"))
-    if not csv_files:
-        raise FileNotFoundError(f"No breaches.csv files found in {output_path}/*/")
+    # Load consolidated parquet file
+    parquet_file = output_path / "all_breaches.parquet"
+    if not parquet_file.exists():
+        raise FileNotFoundError(
+            f"Consolidated breaches parquet not found: {parquet_file}\n"
+            "Run 'monitor run' to generate parquet files."
+        )
 
     conn = duckdb.connect(":memory:")
 
-    # Build UNION ALL query for all CSV files using DuckDB-native read_csv_auto
-    union_parts = []
-    for csv_path in csv_files:
-        portfolio_name = csv_path.parent.name
-        if not re.match(r'^[\w\-. ]+$', portfolio_name):
-            raise ValueError(f"Invalid portfolio directory name: {portfolio_name!r}")
-        # Escape single quotes in path for SQL string literal safety.
-        safe_path = str(csv_path).replace("'", "''")
-        union_parts.append(
-            f"SELECT *, '{portfolio_name}' AS portfolio "
-            f"FROM read_csv_auto('{safe_path}', types={{"
-            f"'factor': 'VARCHAR', 'value': 'DOUBLE', "
-            f"'threshold_min': 'DOUBLE', 'threshold_max': 'DOUBLE'}})"
-        )
-    union_query = " UNION ALL ".join(union_parts)
-
-    # Create breaches table with computed columns directly from CSV
+    # Create breaches table with computed columns directly from parquet
+    safe_path = str(parquet_file).replace("'", "''")
     conn.execute(f"""
         CREATE TABLE breaches AS
         SELECT
@@ -69,7 +88,7 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
                 ELSE 0.0
             END AS distance,
             ABS(value) AS abs_value
-        FROM ({union_query})
+        FROM read_parquet('{safe_path}')
     """)
 
     # Validate for Inf values
@@ -78,7 +97,10 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
         WHERE isinf(value) OR isinf(threshold_min) OR isinf(threshold_max)
     """).fetchone()[0]
     if inf_count > 0:
-        logger.warning("Inf values detected in breach data")
+        logger.warning(
+            "Inf values detected in %d breach records. Review input data for corruption.",
+            inf_count
+        )
 
     # Validate for NaN values (expected for nullable thresholds)
     nan_count = conn.execute("""
@@ -86,10 +108,13 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
         WHERE isnan(value) OR isnan(threshold_min) OR isnan(threshold_max)
     """).fetchone()[0]
     if nan_count > 0:
-        logger.warning("NaN values detected in breach data (expected for nullable thresholds)")
+        logger.debug(
+            "NaN values detected in %d breach records (expected for nullable thresholds)",
+            nan_count
+        )
 
     row_count = conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
-    logger.info("Loaded %d breaches from %d portfolios", row_count, len(csv_files))
+    logger.info("Loaded %d breaches from consolidated parquet", row_count)
 
     return conn
 
@@ -97,28 +122,51 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
 def get_filter_options(conn: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
     """Get available filter values from the unfiltered dataset.
 
-    Returns a dict mapping dimension names to their unique values.
-    Only includes values that have at least one breach.
+    Queries the breaches table and returns all distinct values for each dimension.
+    Results are sorted alphabetically for consistent UI presentation.
+
+    Special handling:
+    - Factor: NULL and empty string values are displayed as "(no factor)"
+    - All other dimensions: NULL values are filtered out
+
+    Args:
+        conn: DuckDB connection with 'breaches' table loaded
+
+    Returns:
+        Dict mapping dimension names to sorted list of unique values:
+        {
+            "portfolio": ["alpha", "beta", ...],
+            "layer": ["tactical", "strategic", ...],
+            "factor": ["(no factor)", "factor_a", "factor_b", ...],
+            "window": ["daily", "monthly", ...],
+            "direction": ["lower", "upper", ...],
+        }
     """
     options: dict[str, list[str]] = {}
 
+    # Standard dimensions: just get distinct non-NULL values
     for dim in ["portfolio", "layer", "window", "direction"]:
         rows = conn.execute(
-            f'SELECT DISTINCT "{dim}" FROM breaches ORDER BY "{dim}"'
+            f'SELECT DISTINCT "{dim}" FROM breaches WHERE "{dim}" IS NOT NULL ORDER BY "{dim}"'
         ).fetchall()
-        options[dim] = [str(r[0]) for r in rows if r[0] is not None]
+        options[dim] = [str(r[0]) for r in rows]
 
-    # Factor needs special handling for NULL/empty values
+    # Factor needs special handling for NULL/empty values -> NO_FACTOR_LABEL
     rows = conn.execute(
         'SELECT DISTINCT NULLIF("factor", \'\') AS factor '
         "FROM breaches ORDER BY factor"
     ).fetchall()
     factor_values = []
+    has_null_factor = False
     for r in rows:
         if r[0] is None:
-            factor_values.append(NO_FACTOR_LABEL)
+            has_null_factor = True
         else:
             factor_values.append(str(r[0]))
+
+    # Prepend "(no factor)" label to match UI conventions
+    if has_null_factor:
+        factor_values = [NO_FACTOR_LABEL] + factor_values
     options["factor"] = factor_values
 
     return options

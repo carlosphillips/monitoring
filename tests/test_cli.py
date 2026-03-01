@@ -95,11 +95,16 @@ class TestCLI:
         result = runner.invoke(main, ["--input", str(e2e_input), "--output", str(output_dir)])
 
         assert result.exit_code == 0
-        assert (output_dir / "summary.csv").exists()
+        # Consolidated parquet (replaced summary.csv)
+        assert (output_dir / "all_breaches.parquet").exists()
+        # HTML reports (retained)
         assert (output_dir / "summary.html").exists()
-        assert (output_dir / "alpha" / "breaches.csv").exists()
         assert (output_dir / "alpha" / "report.html").exists()
-        assert (output_dir / "beta" / "breaches.csv").exists()
+        assert (output_dir / "beta" / "report.html").exists()
+        # No CSV files should be generated (replaced with parquet)
+        assert not (output_dir / "summary.csv").exists()
+        assert not (output_dir / "alpha" / "breaches.csv").exists()
+        assert not (output_dir / "beta" / "breaches.csv").exists()
 
         # Parquet attribution and breach files
         for portfolio in ["alpha", "beta"]:
@@ -109,33 +114,21 @@ class TestCLI:
                 assert (attr_dir / f"{window}_attribution.parquet").exists()
                 assert (attr_dir / f"{window}_breach.parquet").exists()
 
-    def test_summary_counts_match_breaches(self, e2e_input, tmp_path):
-        """Summary breach counts must match the actual breaches in per-portfolio CSVs."""
+    def test_consolidated_breaches_parquet_exists(self, e2e_input, tmp_path):
+        """Consolidated breaches parquet must be created with all portfolio data."""
         output_dir = tmp_path / "output"
         runner = CliRunner()
-        runner.invoke(main, ["--input", str(e2e_input), "--output", str(output_dir)])
+        result = runner.invoke(main, ["--input", str(e2e_input), "--output", str(output_dir)])
 
-        # Read summary
-        with open(output_dir / "summary.csv") as f:
-            summary = list(csv.DictReader(f))
+        assert result.exit_code == 0
+        assert (output_dir / "all_breaches.parquet").exists()
 
-        for portfolio_name in ["alpha", "beta"]:
-            # Count breaches per window from detail CSV
-            with open(output_dir / portfolio_name / "breaches.csv") as f:
-                breaches = list(csv.DictReader(f))
-
-            window_counts = {}
-            for b in breaches:
-                window_counts[b["window"]] = window_counts.get(b["window"], 0) + 1
-
-            # Check against summary
-            for row in summary:
-                if row["portfolio"] == portfolio_name:
-                    expected = window_counts.get(row["window"], 0)
-                    assert int(row["breach_count"]) == expected, (
-                        f"{portfolio_name}/{row['window']}: "
-                        f"summary says {row['breach_count']} but detail has {expected}"
-                    )
+        # Load and verify parquet has data from both portfolios
+        import pandas as pd
+        df = pd.read_parquet(output_dir / "all_breaches.parquet")
+        assert len(df) > 0, "Consolidated parquet should have breach records"
+        assert set(df["portfolio"].unique()) == {"alpha", "beta"}, "Should have both portfolios"
+        assert len(df.columns) > 0, "Should have columns"
 
     def test_exit_code_zero_on_success(self, e2e_input, tmp_path):
         runner = CliRunner()
@@ -159,7 +152,8 @@ class TestCLI:
 
         # Should exit 1 due to error, but alpha should still be processed
         assert result.exit_code == 1
-        assert (output_dir / "alpha" / "breaches.csv").exists()
+        # Consolidated parquet should contain alpha's data (despite beta error)
+        assert (output_dir / "all_breaches.parquet").exists()
         # Error is logged to stderr; with CliRunner it may be in output or not
         assert (output_dir / "alpha" / "report.html").exists()
 
@@ -181,9 +175,11 @@ class TestCLI:
         )
 
         assert result.exit_code == 0
-        # CSV/HTML reports still generated
-        assert (output_dir / "summary.csv").exists()
-        assert (output_dir / "alpha" / "breaches.csv").exists()
+        # HTML reports still generated
+        assert (output_dir / "summary.html").exists()
+        assert (output_dir / "alpha" / "report.html").exists()
+        # No consolidated breaches parquet when --no-parquet is used
+        assert not (output_dir / "all_breaches.parquet").exists()
         # Parquet files not generated
         assert not (output_dir / "alpha" / "attributions").exists()
         assert not (output_dir / "beta" / "attributions").exists()

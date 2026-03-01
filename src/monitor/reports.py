@@ -1,8 +1,7 @@
-"""HTML + CSV report generation."""
+"""HTML report generation (parquet files handle data output)."""
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
 from jinja2 import Environment, PackageLoader
@@ -21,7 +20,7 @@ def generate(
     errors: dict[str, Exception],
     output_dir: Path,
 ) -> None:
-    """Generate all reports.
+    """Generate all reports (HTML only; data output via parquet files).
 
     Args:
         results: {portfolio_name: [Breach, ...]} for successful portfolios
@@ -32,9 +31,6 @@ def generate(
 
     # Build summary data: portfolio x window -> breach_count
     summary_rows = _build_summary(results)
-
-    # Write summary CSV
-    _write_summary_csv(summary_rows, output_dir / "summary.csv")
 
     # Write summary HTML
     _write_summary_html(summary_rows, errors, output_dir / "summary.html")
@@ -49,7 +45,6 @@ def generate(
             key=lambda b: (b.end_date, b.layer, b.factor or "", b.window),
         )
 
-        _write_breaches_csv(sorted_breaches, portfolio_dir / "breaches.csv")
         _write_report_html(portfolio_name, sorted_breaches, portfolio_dir / "report.html")
 
 
@@ -73,13 +68,6 @@ def _build_summary(results: dict[str, list[Breach]]) -> list[dict]:
     return rows
 
 
-def _write_summary_csv(rows: list[dict], path: Path) -> None:
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["portfolio", "window", "breach_count"])
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def _write_summary_html(
     rows: list[dict], errors: dict[str, Exception], path: Path
 ) -> None:
@@ -88,29 +76,29 @@ def _write_summary_html(
     path.write_text(html)
 
 
-def _write_breaches_csv(breaches: list[Breach], path: Path) -> None:
-    fieldnames = [
-        "end_date", "layer", "factor", "window", "value",
-        "threshold_min", "threshold_max",
-    ]
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for b in breaches:
-            writer.writerow({
-                "end_date": str(b.end_date),
-                "layer": b.layer,
-                "factor": b.factor or "",
-                "window": b.window,
-                "value": f"{b.value:.10g}",
-                "threshold_min": f"{b.threshold_min:.10g}" if b.threshold_min is not None else "",
-                "threshold_max": f"{b.threshold_max:.10g}" if b.threshold_max is not None else "",
-            })
-
-
 def _write_report_html(
     portfolio_name: str, breaches: list[Breach], path: Path
 ) -> None:
     template = env.get_template("report.html.j2")
     html = template.render(portfolio_name=portfolio_name, breaches=breaches)
     path.write_text(html)
+
+
+def breaches_to_rows(breaches: list[Breach]) -> list[dict[str, object]]:
+    """Convert Breach objects to CSV row dicts for dashboard use.
+
+    Used by dashboard/data.py to populate DuckDB table without CSV files.
+    This function is transitional; Phase A will replace this with direct parquet loading.
+    """
+    rows = []
+    for b in breaches:
+        rows.append({
+            "end_date": str(b.end_date),
+            "layer": b.layer,
+            "factor": b.factor or "",
+            "window": b.window,
+            "value": float(b.value),
+            "threshold_min": float(b.threshold_min) if b.threshold_min is not None else None,
+            "threshold_max": float(b.threshold_max) if b.threshold_max is not None else None,
+        })
+    return rows

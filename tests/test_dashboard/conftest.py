@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 
 @pytest.fixture
 def sample_output(tmp_path: Path) -> Path:
-    """Create a sample output directory with breach CSVs.
+    """Create a sample output directory with consolidated breaches parquet.
 
     Structure:
         tmp_path/
-            portfolio_a/
-                breaches.csv
-            portfolio_b/
-                breaches.csv
+            all_breaches.parquet (consolidated breach data from multiple portfolios)
     """
-    _write_portfolio_a(tmp_path)
-    _write_portfolio_b(tmp_path)
+    _write_consolidated_parquet(tmp_path)
     return tmp_path
 
 
@@ -30,99 +26,83 @@ def empty_output(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _write_portfolio_a(output_dir: Path) -> None:
-    """Write portfolio_a breach CSV."""
-    portfolio_dir = output_dir / "portfolio_a"
-    portfolio_dir.mkdir(parents=True)
-
-    # Breach CSV with mixed directions and a residual breach
-    fieldnames = [
-        "end_date", "layer", "factor", "window", "value", "threshold_min", "threshold_max",
-    ]
+def _write_consolidated_parquet(output_dir: Path) -> None:
+    """Write consolidated all_breaches.parquet with data from multiple portfolios."""
     rows = [
+        # portfolio_a data
         {
             "end_date": "2024-01-02",
+            "portfolio": "portfolio_a",
             "layer": "structural",
             "factor": "market",
             "window": "daily",
-            "value": "0.006",
-            "threshold_min": "-0.005",
-            "threshold_max": "0.005",
+            "value": 0.006,
+            "threshold_min": -0.005,
+            "threshold_max": 0.005,
         },
         {
             "end_date": "2024-01-02",
+            "portfolio": "portfolio_a",
             "layer": "tactical",
             "factor": "HML",
             "window": "daily",
-            "value": "-0.004",
-            "threshold_min": "-0.003",
-            "threshold_max": "0.003",
+            "value": -0.004,
+            "threshold_min": -0.003,
+            "threshold_max": 0.003,
         },
         {
             "end_date": "2024-01-03",
+            "portfolio": "portfolio_a",
             "layer": "structural",
             "factor": "market",
             "window": "daily",
-            "value": "-0.007",
-            "threshold_min": "-0.005",
-            "threshold_max": "0.005",
+            "value": -0.007,
+            "threshold_min": -0.005,
+            "threshold_max": 0.005,
         },
         {
             "end_date": "2024-01-03",
+            "portfolio": "portfolio_a",
             "layer": "residual",
             "factor": "",
             "window": "daily",
-            "value": "-0.002",
-            "threshold_min": "-0.001",
-            "threshold_max": "0.001",
+            "value": -0.002,
+            "threshold_min": -0.001,
+            "threshold_max": 0.001,
         },
         {
             "end_date": "2024-01-04",
+            "portfolio": "portfolio_a",
             "layer": "structural",
             "factor": "market",
             "window": "monthly",
-            "value": "0.02",
-            "threshold_min": "-0.015",
-            "threshold_max": "0.015",
+            "value": 0.02,
+            "threshold_min": -0.015,
+            "threshold_max": 0.015,
         },
-    ]
-
-    with open(portfolio_dir / "breaches.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def _write_portfolio_b(output_dir: Path) -> None:
-    """Write portfolio_b breach CSV."""
-    portfolio_dir = output_dir / "portfolio_b"
-    portfolio_dir.mkdir(parents=True)
-
-    fieldnames = [
-        "end_date", "layer", "factor", "window", "value", "threshold_min", "threshold_max",
-    ]
-    rows = [
+        # portfolio_b data
         {
             "end_date": "2024-01-02",
+            "portfolio": "portfolio_b",
             "layer": "structural",
             "factor": "SMB",
             "window": "daily",
-            "value": "0.008",
-            "threshold_min": "-0.005",
-            "threshold_max": "0.005",
+            "value": 0.008,
+            "threshold_min": -0.005,
+            "threshold_max": 0.005,
         },
         {
             "end_date": "2024-01-05",
+            "portfolio": "portfolio_b",
             "layer": "tactical",
             "factor": "momentum",
             "window": "daily",
-            "value": "-0.006",
-            "threshold_min": "-0.004",
-            "threshold_max": "0.004",
+            "value": -0.006,
+            "threshold_min": -0.004,
+            "threshold_max": 0.004,
         },
     ]
 
-    with open(portfolio_dir / "breaches.csv", "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    df = pd.DataFrame(rows)
+    df["end_date"] = pd.to_datetime(df["end_date"])
+    df.to_parquet(output_dir / "all_breaches.parquet", index=False)

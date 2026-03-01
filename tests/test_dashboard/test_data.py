@@ -79,8 +79,8 @@ class TestLoadBreaches:
             "SELECT factor, direction FROM breaches "
             "WHERE portfolio='portfolio_a' AND layer='residual'"
         ).fetchone()
-        # DuckDB reads empty CSV strings as NULL
-        assert row[0] is None
+        # Empty string factor for residual (parquet preserves empty strings)
+        assert row[0] == ""
         assert row[1] == "lower"
 
     def test_missing_output_dir(self, tmp_path):
@@ -88,7 +88,7 @@ class TestLoadBreaches:
             load_breaches(tmp_path / "nonexistent")
 
     def test_no_breach_csvs(self, empty_output):
-        with pytest.raises(FileNotFoundError, match="No breaches.csv files found"):
+        with pytest.raises(FileNotFoundError, match="Consolidated breaches parquet not found"):
             load_breaches(empty_output)
 
     def test_accepts_string_path(self, sample_output):
@@ -98,30 +98,26 @@ class TestLoadBreaches:
 
     def test_inf_value_logs_warning(self, tmp_path, caplog):
         """Test that Inf values trigger a warning."""
-        import csv
         import logging
 
-        portfolio_dir = tmp_path / "test_portfolio"
-        portfolio_dir.mkdir()
-        fieldnames = [
-            "end_date", "layer", "factor", "window",
-            "value", "threshold_min", "threshold_max",
-        ]
+        import pandas as pd
+
+        # Create parquet with Inf values
         rows = [
             {
                 "end_date": "2024-01-01",
+                "portfolio": "test",
                 "layer": "structural",
                 "factor": "market",
                 "window": "daily",
-                "value": "inf",
-                "threshold_min": "-0.005",
-                "threshold_max": "0.005",
+                "value": float("inf"),
+                "threshold_min": -0.005,
+                "threshold_max": 0.005,
             },
         ]
-        with open(portfolio_dir / "breaches.csv", "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        df = pd.DataFrame(rows)
+        df["end_date"] = pd.to_datetime(df["end_date"])
+        df.to_parquet(tmp_path / "all_breaches.parquet", index=False)
 
         with caplog.at_level(logging.WARNING):
             load_breaches(tmp_path)
