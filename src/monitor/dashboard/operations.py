@@ -294,16 +294,7 @@ class DashboardOperations:
             Example:
                 ("2024-01-02", "2024-12-31")
         """
-        # Reuse existing AnalyticsContext connection to avoid redundant parquet loading
-        # and ensure thread-safe access through the module-level lock
-        result = self._context._conn.execute(
-            "SELECT MIN(end_date), MAX(end_date) FROM breaches"
-        ).fetchone()
-
-        if result is None or result[0] is None or result[1] is None:
-            raise ValueError("No breach data found in parquet file")
-
-        return (str(result[0]), str(result[1]))
+        return self._context.get_date_range()
 
     def get_summary_stats(self) -> dict[str, Any]:
         """Get summary statistics about the breach dataset.

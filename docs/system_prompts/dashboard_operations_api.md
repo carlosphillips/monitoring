@@ -265,15 +265,13 @@ uv run monitor dashboard-ops export \
   --portfolio alpha \
   > breaches.csv
 
-# Get filter options
+# Get filter options (always outputs JSON)
 uv run monitor dashboard-ops filters \
-  --output ./output \
-  --format json
+  --output ./output
 
-# Get summary stats
+# Get summary stats (always outputs JSON)
 uv run monitor dashboard-ops stats \
-  --output ./output \
-  --format json
+  --output ./output
 ```
 
 ---

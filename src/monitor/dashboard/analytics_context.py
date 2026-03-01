@@ -356,7 +356,7 @@ class AnalyticsContext:
         if limit is None:
             limit = EXPORT_MAX_ROWS
         else:
-            limit = min(limit, EXPORT_MAX_ROWS)
+            limit = min(max(0, int(limit)), EXPORT_MAX_ROWS)
 
         where_sql, params = build_where_clause(
             portfolios, layers, factors, windows, directions,
@@ -417,6 +417,20 @@ class AnalyticsContext:
             options["factor"] = factor_values
 
         return options
+
+    def get_date_range(self) -> tuple[str, str]:
+        """Get the min and max dates in the breach dataset.
+
+        Returns:
+            Tuple of (min_date, max_date) in YYYY-MM-DD format
+        """
+        with self._lock:
+            result = self._conn.execute(
+                "SELECT MIN(end_date), MAX(end_date) FROM breaches"
+            ).fetchone()
+            if result is None or result[0] is None:
+                raise ValueError("No breach data found")
+            return (str(result[0]), str(result[1]))
 
     def get_total_breaches(self) -> int:
         """Get total number of breach records in the dataset.
