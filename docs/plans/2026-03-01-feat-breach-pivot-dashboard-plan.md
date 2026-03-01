@@ -4,8 +4,8 @@ type: feat
 status: active
 date: 2026-03-01
 origin: docs/brainstorms/2026-03-01-breach-pivot-dashboard-brainstorm.md
-progress: "Phase 3 Complete (State Management & UI Components)"
-last_updated: 2026-03-01
+progress: "Phase 5 Complete (Visualization, Interactivity, Tests)"
+last_updated: 2026-03-02
 ---
 
 # Breach Pivot Dashboard Implementation Plan
@@ -592,15 +592,15 @@ DIMENSIONS = {
 - [x] **Primary filter**: Portfolio selector (prominent control to select portfolio(s) to analyze) — COMPLETED Phase 3
 - [x] **Secondary filters**: Date range, layer, factor, window, breach direction filters apply across all views — COMPLETED Phase 3
 - [x] **Hierarchy configuration**: 3 dropdowns for 1st/2nd/3rd dimension ordering from any 6 dimensions (portfolio, layer, factor, window, date, direction); unlimited nesting depth — COMPLETED Phase 3
-- [ ] **Time-grouped visualization**: Stacked bar/area chart with red (lower) and blue (upper) per date — Phase 4
-- [ ] **Non-time visualization**: Split-cell HTML table showing upper/lower counts with conditional formatting (darker = more breaches) — Phase 4
-- [ ] **Synchronized timelines**: All timeline rows share same x-axis date range (aligned) — Phase 4
-- [ ] **Box-select secondary filter**: Drag on timeline x-axis to select date range; stacks on top of filter controls — Phase 5
-- [ ] **Expand/collapse hierarchy**: Toggle triangles to show/hide nested groups; state is global across all views — Phase 5
-- [ ] **Drill-down**: Click on chart bar or table cell to open modal showing:
+- [x] **Time-grouped visualization**: Stacked bar/area chart with red (lower) and blue (upper) per date — COMPLETED Phase 4
+- [x] **Non-time visualization**: Split-cell HTML table showing upper/lower counts with conditional formatting (darker = more breaches) — COMPLETED Phase 4
+- [x] **Synchronized timelines**: All timeline rows share same x-axis date range (aligned) — COMPLETED Phase 4
+- [x] **Box-select secondary filter**: Drag on timeline x-axis to select date range; stacks on top of filter controls — COMPLETED Phase 5
+- [x] **Expand/collapse hierarchy**: Toggle triangles to show/hide nested groups; state is global across all views — COMPLETED Phase 5
+- [x] **Drill-down**: Click on chart bar or table cell to open modal showing:
   - Individual breach records matching the clicked cell (e.g., all breaches for "Portfolio A / Tactical / Momentum / lower" on a specific date)
   - Columns: end_date, layer, factor, direction, contribution value
-  - Allow filtering/sorting within modal; no attribution detail (keep MVP focused) — Phase 5
+  - Allow filtering/sorting within modal; no attribution detail (keep MVP focused) — COMPLETED Phase 5
 - [x] **Manual refresh**: Button to reload consolidated parquet files from disk and re-query DuckDB — COMPLETED Phase 2
 - [x] **Professional styling**: Modern investment app aesthetic (clean typography, sophisticated colors, subtle depth) — COMPLETED Phase 3
 
@@ -614,12 +614,12 @@ DIMENSIONS = {
 
 ### Quality Gates
 
-- [ ] Unit tests for query builders (parameterization, filtering, aggregation)
-- [ ] Integration tests for DuckDB data loading (parquet → memory, validation, queries)
-- [ ] Callback tests for state transitions (filter → store → visualization)
-- [ ] Manual smoke tests on all filter combinations and hierarchy configs
-- [ ] Code review for security (SQL injection prevention, data validation)
-- [ ] Linting and type hints (Python 3.10+)
+- [x] Unit tests for query builders (parameterization, filtering, aggregation) — COMPLETED Phase 4/5
+- [x] Integration tests for DuckDB data loading (parquet → memory, validation, queries) — COMPLETED Phase 4/5
+- [x] Callback tests for state transitions (filter → store → visualization) — COMPLETED Phase 4/5
+- [ ] Manual smoke tests on all filter combinations and hierarchy configs — TODO Phase 5+
+- [ ] Code review for security (SQL injection prevention, data validation) — TODO Phase 5+
+- [ ] Linting and type hints (Python 3.10+) — TODO Phase 5+
 
 #### Research Insights: Testing Strategy
 

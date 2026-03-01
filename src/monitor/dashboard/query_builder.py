@@ -43,11 +43,16 @@ class BreachQuery:
 
     Includes filters and dimensions to group by. All values are validated
     against allow-lists before SQL construction.
+
+    Date range filtering supports both primary range (from controls) and
+    secondary brush selection. Both filters apply together (intersection).
     """
 
     filters: list[FilterSpec] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
     include_date_in_group: bool = True  # Include end_date in GROUP BY?
+    date_range_start: Optional[str] = None  # ISO date string
+    date_range_end: Optional[str] = None  # ISO date string
 
     def validate(self) -> None:
         """Validate query specification.
@@ -147,6 +152,15 @@ class TimeSeriesAggregator:
             # Add to params dict
             for i, value in enumerate(filter_spec.values):
                 params[f"{filter_spec.dimension}_{i}"] = value
+
+        # Add date range filtering (primary + secondary brush selection)
+        if query_spec.date_range_start:
+            where_parts.append("end_date >= $date_start")
+            params["date_start"] = query_spec.date_range_start
+
+        if query_spec.date_range_end:
+            where_parts.append("end_date <= $date_end")
+            params["date_end"] = query_spec.date_range_end
 
         where_clause = " AND ".join(where_parts) if where_parts else "1=1"
 
@@ -250,6 +264,15 @@ class CrossTabAggregator:
 
             for i, value in enumerate(filter_spec.values):
                 params[f"{filter_spec.dimension}_{i}"] = value
+
+        # Add date range filtering (primary + secondary brush selection)
+        if query_spec.date_range_start:
+            where_parts.append("end_date >= $date_start")
+            params["date_start"] = query_spec.date_range_start
+
+        if query_spec.date_range_end:
+            where_parts.append("end_date <= $date_end")
+            params["date_end"] = query_spec.date_range_end
 
         where_clause = " AND ".join(where_parts) if where_parts else "1=1"
 

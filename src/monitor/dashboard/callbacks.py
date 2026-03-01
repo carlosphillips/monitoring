@@ -16,6 +16,8 @@ import logging
 from functools import lru_cache
 from typing import Any, Optional
 
+import dash
+import pandas as pd
 from dash import callback, dcc, html
 from dash.dependencies import Input, Output, State
 
@@ -29,6 +31,12 @@ from monitor.dashboard.query_builder import (
     DrillDownQuery,
 )
 from monitor.dashboard.state import DashboardState
+from monitor.dashboard.visualization import (
+    build_synchronized_timelines,
+    build_split_cell_table,
+    format_split_cell_html,
+    empty_figure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +192,7 @@ def register_state_callback(app) -> None:
 def cached_query_execution(
     portfolio_tuple: tuple[str, ...],
     date_range_tuple: tuple[str, str] | None,
+    brush_selection_tuple: tuple[str, str] | None,
     hierarchy_tuple: tuple[str, ...],
     layer_tuple: tuple[str, ...] | None,
     factor_tuple: tuple[str, ...] | None,
@@ -193,19 +202,21 @@ def cached_query_execution(
     """Execute breach query with LRU caching.
 
     **Cache Strategy:**
-    - Cache key: portfolio, date_range, hierarchy, layer, factor, window, direction filters
+    - Cache key: portfolio, date_range, brush_selection, hierarchy, layer, factor, window, direction filters
     - Cache size: 128 entries (covers typical user workflows with multiple filter combinations)
     - TTL: None (infinite until manual refresh via cache_clear())
     - Invalidation: Called on manual refresh button click or app restart
 
     **Performance Impact:**
     - Cache avoids redundant DuckDB queries when filters unchanged
-    - Typical scenario: User changes date range → cache HIT (date filtering done in SQL WHERE)
+    - Typical scenario: User changes brush selection → cache MISS (new combination)
+    - Brush selection stacks with primary date_range (intersection applied in SQL WHERE)
     - Worst case: User cycles through many filter combinations → cache MISS (but still <1s per query)
 
     Args:
         portfolio_tuple: Selected portfolios as tuple (hashable)
-        date_range_tuple: Date range as (start_iso, end_iso) tuple or None
+        date_range_tuple: Primary date range as (start_iso, end_iso) tuple or None
+        brush_selection_tuple: Secondary brush selection as (start_iso, end_iso) tuple or None
         hierarchy_tuple: Hierarchy dimensions as tuple
         layer_tuple: Layer filters as tuple or None
         factor_tuple: Factor filters as tuple or None
@@ -243,11 +254,29 @@ def cached_query_execution(
         # Note: Date range filtering is done in SQL WHERE clause, not filters
         # (dates are already validated in state)
 
+        # Compute effective date range (intersection of primary and brush selection)
+        effective_start = date_range_tuple[0] if date_range_tuple else None
+        effective_end = date_range_tuple[1] if date_range_tuple else None
+
+        if brush_selection_tuple:
+            brush_start, brush_end = brush_selection_tuple
+            if effective_start:
+                effective_start = max(effective_start, brush_start)
+            else:
+                effective_start = brush_start
+
+            if effective_end:
+                effective_end = min(effective_end, brush_end)
+            else:
+                effective_end = brush_end
+
         # Build query with hierarchy dimensions
         query_spec = BreachQuery(
             filters=filters,
             group_by=list(hierarchy_tuple),
             include_date_in_group=True,
+            date_range_start=effective_start,
+            date_range_end=effective_end,
         )
 
         # Execute time-series aggregation
@@ -271,6 +300,8 @@ def cached_query_execution(
                 "windows": list(window_tuple) if window_tuple else [],
                 "directions": list(direction_tuple) if direction_tuple else [],
                 "date_range": date_range_tuple,
+                "brush_selection": brush_selection_tuple,
+                "effective_date_range": (effective_start, effective_end),
             },
         }
 
@@ -331,10 +362,19 @@ def register_query_callback(app) -> None:
                     state.date_range[1].isoformat(),
                 )
 
+            # Convert brush_selection to tuple for cache key
+            brush_selection_tuple = None
+            if state.brush_selection:
+                brush_selection_tuple = (
+                    state.brush_selection.get("start", ""),
+                    state.brush_selection.get("end", ""),
+                )
+
             # Execute cached query
             result = cached_query_execution(
                 portfolio_tuple=portfolio_tuple,
                 date_range_tuple=date_range_tuple,
+                brush_selection_tuple=brush_selection_tuple,
                 hierarchy_tuple=hierarchy_tuple,
                 layer_tuple=layer_tuple,
                 factor_tuple=factor_tuple,
@@ -359,8 +399,8 @@ def register_query_callback(app) -> None:
 def register_visualization_callbacks(app) -> None:
     """Register visualization callbacks (timelines, tables, drill-down).
 
-    These are placeholder implementations for Phase 4 (Visualization).
-    They depend on breach-data and app-state stores.
+    These callbacks depend on breach-data and app-state stores.
+    They render synchronized timelines (time-grouped) or split-cell tables (non-time).
 
     Args:
         app: Dash app instance
@@ -374,27 +414,40 @@ def register_visualization_callbacks(app) -> None:
     def render_timelines(breach_data: dict, state_json: dict) -> html.Div:
         """Render synchronized timeline charts.
 
-        PLACEHOLDER for Phase 4 implementation.
+        Builds stacked bar charts with red (lower) and blue (upper) breaches,
+        grouped by first hierarchy dimension, with synchronized x-axes.
 
         Args:
             breach_data: Query results with timeseries_data
             state_json: Dashboard state
 
         Returns:
-            Div containing Plotly figures
+            Div containing Plotly figure
         """
         if not breach_data or not breach_data.get("timeseries_data"):
             return html.Div(
-                html.Div("No data available for selected filters", style={"padding": "20px"}),
+                [html.Div("No data available for selected filters", style={"padding": "20px"})],
                 id="timeline-container",
             )
 
-        # Phase 4: Implement synchronized timelines with Plotly
-        # See plan lines 340-399 for architecture
-        return html.Div(
-            html.Div("Timeline visualization placeholder (Phase 4)", style={"padding": "20px"}),
-            id="timeline-container",
-        )
+        try:
+            state = DashboardState.from_dict(state_json)
+            timeseries_data = breach_data.get("timeseries_data", [])
+
+            # Build synchronized timelines figure
+            fig = build_synchronized_timelines(timeseries_data, state)
+
+            return html.Div(
+                [dcc.Graph(id="synchronized-timelines", figure=fig)],
+                id="timeline-container",
+            )
+
+        except Exception as e:
+            logger.error("Error rendering timelines: %s", e)
+            return html.Div(
+                [html.Div(f"Error rendering timeline: {str(e)}", style={"padding": "20px", "color": "red"})],
+                id="timeline-container",
+            )
 
     @callback(
         Output("table-container", "children"),
@@ -404,29 +457,295 @@ def register_visualization_callbacks(app) -> None:
     def render_table(breach_data: dict, state_json: dict) -> html.Div:
         """Render cross-tab table visualization.
 
-        PLACEHOLDER for Phase 4 implementation.
+        Builds split-cell table with upper/lower breach counts,
+        conditional formatting based on count intensity.
 
         Args:
             breach_data: Query results with crosstab_data
             state_json: Dashboard state
 
         Returns:
-            Div containing table
+            Div containing formatted HTML table
         """
         if not breach_data or not breach_data.get("crosstab_data"):
             return html.Div(
-                html.Div("No data available for selected filters", style={"padding": "20px"}),
+                [html.Div("No data available for selected filters", style={"padding": "20px"})],
                 id="table-container",
             )
 
-        # Phase 4: Implement cross-tab table with Dash AG Grid
-        # See plan lines 428-443 for architecture
-        return html.Div(
-            html.Div("Table visualization placeholder (Phase 4)", style={"padding": "20px"}),
-            id="table-container",
-        )
+        try:
+            state = DashboardState.from_dict(state_json)
+            crosstab_data = breach_data.get("crosstab_data", [])
 
-    logger.info("Registered visualization callbacks (Phase 4 placeholders)")
+            # Build split-cell table data
+            df_table = build_split_cell_table(crosstab_data, state)
+
+            if df_table.empty:
+                return html.Div(
+                    [html.Div("No data available", style={"padding": "20px"})],
+                    id="table-container",
+                )
+
+            # Build table as Dash HTML components
+            # Header row
+            header_cells = [html.Th(col, style={"border": "1px solid #ddd", "padding": "8px"})
+                           for col in df_table.columns if col not in ["upper_color", "lower_color"]]
+
+            # Data rows with conditional coloring
+            table_rows = []
+            for _, row in df_table.iterrows():
+                row_cells = []
+                for col in df_table.columns:
+                    if col in ["upper_color", "lower_color"]:
+                        continue
+
+                    if col == "upper_breaches":
+                        style = {
+                            "backgroundColor": row["upper_color"],
+                            "border": "1px solid #ddd",
+                            "padding": "8px",
+                            "textAlign": "center",
+                        }
+                    elif col == "lower_breaches":
+                        style = {
+                            "backgroundColor": row["lower_color"],
+                            "border": "1px solid #ddd",
+                            "padding": "8px",
+                            "textAlign": "center",
+                        }
+                    else:
+                        style = {"border": "1px solid #ddd", "padding": "8px"}
+
+                    row_cells.append(html.Td(str(row[col]), style=style))
+
+                table_rows.append(html.Tr(row_cells))
+
+            table = html.Table(
+                [
+                    html.Thead(html.Tr(header_cells), style={"backgroundColor": "#f5f5f5"}),
+                    html.Tbody(table_rows),
+                ],
+                style={"borderCollapse": "collapse", "width": "100%"},
+            )
+
+            return html.Div([table], id="table-container")
+
+        except Exception as e:
+            logger.error("Error rendering table: %s", e)
+            return html.Div(
+                [html.Div(f"Error rendering table: {str(e)}", style={"padding": "20px", "color": "red"})],
+                id="table-container",
+            )
+
+    @callback(
+        Output("app-state", "data"),
+        Input("synchronized-timelines", "relayoutData"),
+        State("app-state", "data"),
+        prevent_initial_call=True,
+    )
+    def handle_box_select(relayout_data: dict, state_json: dict) -> dict:
+        """Handle timeline x-axis box-select to create secondary date filter.
+
+        When user drags on timeline x-axis (dragmode='select'), extract the
+        selected date range and store as brush_selection in state.
+        This stacks with primary date range filter.
+
+        Args:
+            relayout_data: Plotly relayoutData event containing xaxis.range
+            state_json: Current dashboard state
+
+        Returns:
+            Updated state dict with brush_selection or unchanged state
+        """
+        if not relayout_data or "xaxis.range" not in relayout_data:
+            # No selection or other relayout event, return unchanged
+            return state_json
+
+        try:
+            state = DashboardState.from_dict(state_json)
+
+            # Extract x-axis range from relayoutData
+            x_range = relayout_data.get("xaxis.range")
+            if not x_range or len(x_range) != 2:
+                logger.warning("Invalid xaxis.range in relayoutData: %s", x_range)
+                return state_json
+
+            start, end = x_range
+
+            # Dates may be ISO strings or timestamps; ensure strings
+            start_str = str(start).split("T")[0] if isinstance(start, str) else start
+            end_str = str(end).split("T")[0] if isinstance(end, str) else end
+
+            # Update state with brush_selection
+            state.brush_selection = {
+                "start": start_str,
+                "end": end_str,
+            }
+
+            logger.debug("Box-select captured date range: %s to %s", start_str, end_str)
+            return state.to_dict()
+
+        except Exception as e:
+            logger.error("Error handling box-select: %s", e)
+            return state_json
+
+    @callback(
+        Output("app-state", "data"),
+        Input("expand-all-btn", "n_clicks"),
+        State("app-state", "data"),
+        prevent_initial_call=True,
+    )
+    def expand_all(n_clicks: int, state_json: dict) -> dict:
+        """Expand all timeline groups.
+
+        Sets expanded_groups to None, which means all groups are shown.
+
+        Args:
+            n_clicks: Number of times button was clicked
+            state_json: Current dashboard state
+
+        Returns:
+            Updated state with expanded_groups = None
+        """
+        try:
+            state = DashboardState.from_dict(state_json)
+            state.expanded_groups = None  # None means all expanded
+            logger.debug("Expand all clicked (click %d)", n_clicks)
+            return state.to_dict()
+        except Exception as e:
+            logger.error("Error in expand_all: %s", e)
+            return state_json
+
+    @callback(
+        Output("app-state", "data"),
+        Input("collapse-all-btn", "n_clicks"),
+        State("app-state", "data"),
+        prevent_initial_call=True,
+    )
+    def collapse_all(n_clicks: int, state_json: dict) -> dict:
+        """Collapse all timeline groups.
+
+        Sets expanded_groups to empty set, which means all groups are hidden.
+
+        Args:
+            n_clicks: Number of times button was clicked
+            state_json: Current dashboard state
+
+        Returns:
+            Updated state with expanded_groups = empty set
+        """
+        try:
+            state = DashboardState.from_dict(state_json)
+            state.expanded_groups = set()  # Empty set means all collapsed
+            logger.debug("Collapse all clicked (click %d)", n_clicks)
+            return state.to_dict()
+        except Exception as e:
+            logger.error("Error in collapse_all: %s", e)
+            return state_json
+
+    @callback(
+        Output("drill-down-modal", "is_open"),
+        Output("drill-down-grid-container", "children"),
+        Input("show-drill-down-btn", "n_clicks"),
+        Input("close-drill-down-modal", "n_clicks"),
+        State("app-state", "data"),
+        prevent_initial_call=True,
+    )
+    def handle_drill_down(show_clicks: int, close_clicks: int, state_json: dict) -> tuple[bool, html.Div]:
+        """Handle drill-down modal open/close and populate with detail records.
+
+        When "Show Details" button is clicked, query all breach records matching
+        current filters and display in a table within the modal.
+
+        Args:
+            show_clicks: Click count for "Show Details" button
+            close_clicks: Click count for "Close" button
+            state_json: Current dashboard state
+
+        Returns:
+            Tuple of (modal_is_open, modal_body_content)
+        """
+        # Determine which button was clicked
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            return False, html.Div("Click 'Show Details' to view breach records")
+
+        triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+        # If close button clicked, hide modal
+        if triggered_id == "close-drill-down-modal":
+            return False, html.Div()
+
+        # If show button clicked, fetch and display data
+        if triggered_id == "show-drill-down-btn":
+            try:
+                state = DashboardState.from_dict(state_json)
+
+                # Build filter list for drill-down query
+                filters = []
+
+                if state.selected_portfolios and state.selected_portfolios != ["All"]:
+                    filters.append(FilterSpec(dimension="portfolio", values=state.selected_portfolios))
+
+                if state.layer_filter:
+                    filters.append(FilterSpec(dimension="layer", values=state.layer_filter))
+
+                if state.factor_filter:
+                    filters.append(FilterSpec(dimension="factor", values=state.factor_filter))
+
+                if state.window_filter:
+                    filters.append(FilterSpec(dimension="window", values=state.window_filter))
+
+                if state.direction_filter:
+                    filters.append(FilterSpec(dimension="direction", values=state.direction_filter))
+
+                # Execute drill-down query
+                db = get_db()
+                drill_down_qry = DrillDownQuery(db)
+                drill_down_results = drill_down_qry.execute(filters, limit=1000)
+
+                if not drill_down_results:
+                    return True, html.Div("No records match the selected filters", style={"padding": "20px"})
+
+                # Format results as table
+                df_drill = pd.DataFrame(drill_down_results)
+
+                # Display columns
+                display_cols = ["end_date", "layer", "factor", "direction"]
+                if "contribution" in df_drill.columns:
+                    display_cols.append("contribution")
+
+                # Filter to only display columns
+                df_display = df_drill[[col for col in display_cols if col in df_drill.columns]]
+
+                # Build table as Dash HTML components
+                header_cells = [html.Th(col, style={"border": "1px solid #ddd", "padding": "8px"})
+                               for col in df_display.columns]
+
+                table_rows = []
+                for _, row in df_display.iterrows():
+                    row_cells = [html.Td(str(row[col]), style={"border": "1px solid #ddd", "padding": "8px"})
+                                for col in df_display.columns]
+                    table_rows.append(html.Tr(row_cells))
+
+                table = html.Table(
+                    [
+                        html.Thead(html.Tr(header_cells), style={"backgroundColor": "#f5f5f5"}),
+                        html.Tbody(table_rows),
+                    ],
+                    style={"borderCollapse": "collapse", "width": "100%", "marginTop": "1rem"},
+                    className="table table-striped table-hover",
+                )
+
+                return True, html.Div([table])
+
+            except Exception as e:
+                logger.error("Error in drill_down: %s", e)
+                return True, html.Div(f"Error: {str(e)}", style={"padding": "20px", "color": "red"})
+
+        return False, html.Div()
+
+    logger.info("Registered visualization callbacks (Phase 4) and box-select & expand/collapse & drill-down (Phase 5)")
 
 
 # ============================================================================

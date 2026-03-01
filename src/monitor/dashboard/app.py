@@ -368,7 +368,29 @@ def _create_layout() -> dbc.Container:
                 [
                     dbc.Col(
                         [
-                            html.H5("Timeline Visualization", className="mt-4 mb-3"),
+                            html.Div(
+                                [
+                                    html.H5("Timeline Visualization", className="mt-4 mb-2", style={"display": "inline-block"}),
+                                    html.Div(
+                                        [
+                                            html.Button(
+                                                "Expand All",
+                                                id="expand-all-btn",
+                                                className="btn btn-sm btn-outline-secondary ms-3",
+                                                style={"marginBottom": "0.5rem"},
+                                            ),
+                                            html.Button(
+                                                "Collapse All",
+                                                id="collapse-all-btn",
+                                                className="btn btn-sm btn-outline-secondary",
+                                                style={"marginBottom": "0.5rem", "marginLeft": "0.5rem"},
+                                            ),
+                                        ],
+                                        style={"display": "inline-block", "float": "right"},
+                                    ),
+                                ],
+                                style={"display": "block", "overflow": "auto"},
+                            ),
                             html.Div(id="timeline-container", children=[
                                 html.Div("Select filters to view timeline...", style={"padding": "20px"})
                             ]),
@@ -383,7 +405,18 @@ def _create_layout() -> dbc.Container:
                 [
                     dbc.Col(
                         [
-                            html.H5("Cross-Tab View", className="mt-4 mb-3"),
+                            html.Div(
+                                [
+                                    html.H5("Cross-Tab View", className="mt-4 mb-2", style={"display": "inline-block"}),
+                                    html.Button(
+                                        "Show Details",
+                                        id="show-drill-down-btn",
+                                        className="btn btn-sm btn-outline-primary",
+                                        style={"marginBottom": "0.5rem", "marginLeft": "auto", "float": "right"},
+                                    ),
+                                ],
+                                style={"display": "block", "overflow": "auto"},
+                            ),
                             html.Div(id="table-container", children=[
                                 html.Div("Select filters to view table...", style={"padding": "20px"})
                             ]),
@@ -391,6 +424,28 @@ def _create_layout() -> dbc.Container:
                         width=12,
                     ),
                 ],
+            ),
+
+            # ================================================================
+            # DRILL-DOWN MODAL
+            # ================================================================
+            dbc.Modal(
+                [
+                    dbc.ModalHeader("Breach Details"),
+                    dbc.ModalBody(
+                        [
+                            html.Div(id="drill-down-grid-container", children=[
+                                html.Div("Loading...", style={"padding": "20px"})
+                            ]),
+                        ]
+                    ),
+                    dbc.ModalFooter(
+                        dbc.Button("Close", id="close-drill-down-modal", className="btn btn-secondary")
+                    ),
+                ],
+                id="drill-down-modal",
+                size="lg",
+                is_open=False,
             ),
 
             # ================================================================

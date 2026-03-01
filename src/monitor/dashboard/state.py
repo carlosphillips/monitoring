@@ -51,6 +51,10 @@ class DashboardState(BaseModel):
     # Secondary date filter from box-select on timeline x-axis
     brush_selection: dict[str, str] | None = None
 
+    # Hierarchy expansion state: set of expanded group keys (for expand/collapse triangles)
+    # Empty set means all collapsed, None means all expanded (default)
+    expanded_groups: set[str] | None = None
+
     # Additional filters: layer, factor, window, direction
     # These are complementary to hierarchy_dimensions
     layer_filter: list[str] | None = None
@@ -98,7 +102,11 @@ class DashboardState(BaseModel):
 
     def to_dict(self) -> dict:
         """Serialize to dict for dcc.Store."""
-        return self.model_dump(mode="json")
+        data = self.model_dump(mode="json")
+        # Convert set to list for JSON serialization
+        if self.expanded_groups is not None:
+            data["expanded_groups"] = list(self.expanded_groups)
+        return data
 
     @classmethod
     def from_dict(cls, data: dict) -> DashboardState:
@@ -111,4 +119,9 @@ class DashboardState(BaseModel):
             if isinstance(end, str):
                 end = date.fromisoformat(end)
             data["date_range"] = (start, end)
+
+        # Convert list back to set for expanded_groups
+        if "expanded_groups" in data and data["expanded_groups"] is not None:
+            data["expanded_groups"] = set(data["expanded_groups"])
+
         return cls(**data)
