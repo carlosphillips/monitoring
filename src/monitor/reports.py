@@ -82,23 +82,3 @@ def _write_report_html(
     template = env.get_template("report.html.j2")
     html = template.render(portfolio_name=portfolio_name, breaches=breaches)
     path.write_text(html)
-
-
-def breaches_to_rows(breaches: list[Breach]) -> list[dict[str, object]]:
-    """Convert Breach objects to CSV row dicts for dashboard use.
-
-    Used by dashboard/data.py to populate DuckDB table without CSV files.
-    This function is transitional; Phase A will replace this with direct parquet loading.
-    """
-    rows = []
-    for b in breaches:
-        rows.append({
-            "end_date": str(b.end_date),
-            "layer": b.layer,
-            "factor": b.factor or "",
-            "window": b.window,
-            "value": float(b.value),
-            "threshold_min": float(b.threshold_min) if b.threshold_min is not None else None,
-            "threshold_max": float(b.threshold_max) if b.threshold_max is not None else None,
-        })
-    return rows

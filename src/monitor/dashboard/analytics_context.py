@@ -196,6 +196,7 @@ class AnalyticsContext:
         abs_value_range: list[float] | None = None,
         distance_range: list[float] | None = None,
         limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Query breaches with dimensional filtering.
 
@@ -210,6 +211,7 @@ class AnalyticsContext:
             abs_value_range: [min, max] for absolute value filter
             distance_range: [min, max] for distance from threshold
             limit: Max rows to return (caps at DETAIL_TABLE_MAX_ROWS)
+            offset: Number of rows to skip before returning results (for pagination)
 
         Returns:
             List of breach row dicts
@@ -241,19 +243,17 @@ class AnalyticsContext:
             if limit < 0:
                 raise ValueError(f"Invalid limit (must be >= 0): {limit}")
 
-        # Security: Standardize input lists (convert None to empty list)
-        portfolios = self._sanitize_string_list(portfolios)
-        layers = self._sanitize_string_list(layers)
-        factors = self._sanitize_string_list(factors)
-        windows = self._sanitize_string_list(windows)
-        directions = self._sanitize_string_list(directions)
+        # Validate offset
+        offset = int(offset)
+        if offset < 0:
+            raise ValueError(f"Invalid offset (must be >= 0): {offset}")
 
         where_sql, params = build_where_clause(
-            portfolios if portfolios else None,
-            layers if layers else None,
-            factors if factors else None,
-            windows if windows else None,
-            directions if directions else None,
+            portfolios,
+            layers,
+            factors,
+            windows,
+            directions,
             start_date,
             end_date,
             abs_value_range,
@@ -266,8 +266,10 @@ class AnalyticsContext:
             {where_sql}
             ORDER BY end_date DESC, portfolio, layer, factor
             LIMIT ?
+            OFFSET ?
         """
         params.append(limit)
+        params.append(offset)
 
         with self._lock:
             result = self._conn.execute(sql, params)
@@ -488,36 +490,45 @@ class AnalyticsContext:
                 ```
         """
         with self._lock:
-            # Get total breaches
-            total_breaches = self._conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
+            # Single consolidated aggregate query instead of 7+ separate queries
+            agg_row = self._conn.execute("""
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(DISTINCT portfolio) AS n_portfolio,
+                    COUNT(DISTINCT layer) AS n_layer,
+                    COUNT(DISTINCT factor) AS n_factor,
+                    COUNT(DISTINCT "window") AS n_window,
+                    COUNT(DISTINCT direction) AS n_direction,
+                    MIN(end_date) AS min_date,
+                    MAX(end_date) AS max_date
+                FROM breaches
+            """).fetchone()
 
-            # Get portfolios
+            # Portfolio names list (need actual values, not just count)
             portfolios = [
-                r[0] for r in self._conn.execute(
+                str(r[0]) for r in self._conn.execute(
                     "SELECT DISTINCT portfolio FROM breaches ORDER BY portfolio"
                 ).fetchall()
             ]
 
-            # Get date range
-            date_result = self._conn.execute(
-                "SELECT MIN(end_date), MAX(end_date) FROM breaches"
-            ).fetchone()
-            date_range = (str(date_result[0]), str(date_result[1])) if date_result[0] else (None, None)
+        date_range = (
+            (str(agg_row[6]), str(agg_row[7]))
+            if agg_row[6] is not None
+            else (None, None)
+        )
 
-            # Get dimension counts
-            dimensions = {}
-            for dim in ["portfolio", "layer", "factor", "window", "direction"]:
-                count = self._conn.execute(
-                    f'SELECT COUNT(DISTINCT "{dim}") FROM breaches'
-                ).fetchone()[0]
-                dimensions[dim] = count
-
-            return {
-                "total_breaches": int(total_breaches),
-                "portfolios": portfolios,
-                "date_range": date_range,
-                "dimensions": dimensions,
-            }
+        return {
+            "total_breaches": int(agg_row[0]),
+            "portfolios": portfolios,
+            "date_range": date_range,
+            "dimensions": {
+                "portfolio": int(agg_row[1]),
+                "layer": int(agg_row[2]),
+                "factor": int(agg_row[3]),
+                "window": int(agg_row[4]),
+                "direction": int(agg_row[5]),
+            },
+        }
 
     def close(self) -> None:
         """Close the DuckDB connection and release resources."""
@@ -578,21 +589,6 @@ class AnalyticsContext:
         if math.isinf(min_val) or math.isinf(max_val):
             return False
         return min_val <= max_val
-
-    @staticmethod
-    def _sanitize_string_list(values: list[str] | None) -> list[str]:
-        """Sanitize and return a string list.
-
-        Args:
-            values: List of strings to sanitize
-
-        Returns:
-            Sanitized list (converts None to empty list)
-        """
-        if values is None:
-            return []
-        # Ensure all values are strings
-        return [str(v) for v in values if v is not None]
 
     @staticmethod
     def _sanitize_csv_value(value: Any) -> str:

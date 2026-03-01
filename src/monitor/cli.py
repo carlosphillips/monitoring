@@ -412,6 +412,7 @@ def dashboard(output_dir: Path, port: int, debug: bool) -> None:
     help="Output format",
 )
 @click.option("--limit", type=int, default=None, help="Max rows to return")
+@click.option("--offset", type=int, default=0, help="Number of rows to skip (for pagination)")
 def query(
     output_dir: Path,
     portfolio: tuple[str, ...],
@@ -431,6 +432,7 @@ def query(
     selection_json: str | None,
     output_format: str,
     limit: int | None,
+    offset: int,
 ) -> None:
     """Query filtered breach data."""
     logging.basicConfig(
@@ -529,9 +531,14 @@ def query(
     if limit is None:
         limit = DEFAULT_QUERY_LIMIT
 
+    if offset < 0:
+        click.echo("Error: --offset must be >= 0", err=True)
+        sys.exit(1)
+
     sql = f"SELECT * FROM breaches {where_sql} ORDER BY end_date DESC, portfolio, layer, factor"
-    sql += " LIMIT ?"
+    sql += " LIMIT ? OFFSET ?"
     params.append(limit)
+    params.append(offset)
 
     result = conn.execute(sql, params)
     columns = [desc[0] for desc in result.description]
@@ -618,6 +625,7 @@ def dashboard_ops() -> None:
 @_range_filter_options
 @_format_option(default="json")
 @click.option("--limit", type=int, default=None, help="Max rows to return")
+@click.option("--offset", type=int, default=0, help="Number of rows to skip (for pagination)")
 def ops_query(
     output_dir: Path,
     portfolio: tuple[str, ...],
@@ -633,6 +641,7 @@ def ops_query(
     distance_max: float | None,
     output_format: str,
     limit: int | None,
+    offset: int,
 ) -> None:
     """Query breach records with filters (agent-native)."""
     _setup_logging()
@@ -646,6 +655,7 @@ def ops_query(
             **_build_filter_kwargs(portfolio, layer, factor, window, direction, start_date, end_date),
             **_build_range_kwargs(abs_value_min, abs_value_max, distance_min, distance_max),
             limit=limit,
+            offset=offset,
         )
 
     text = _format_rows(rows, output_format)

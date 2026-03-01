@@ -384,6 +384,8 @@ def _build_tree(
     """Build a nested dict tree from flat grouped data.
 
     This is a unified builder used by both timeline and category modes.
+    Leaf data is only stored at the leaf level of the hierarchy to avoid
+    O(n * depth) memory from duplicating rows up the tree.
 
     Returns:
         Dict mapping group_value -> {
@@ -415,12 +417,25 @@ def _build_tree(
             entry["children"] = _build_tree(
                 data["children_rows"], hierarchy, level + 1
             )
-            # Aggregate leaf_data from direct children (already computed bottom-up)
-            agg: list[dict] = []
-            for child_node in entry["children"].values():
-                agg.extend(child_node.get("leaf_data", []))
-            entry["leaf_data"] = agg
         result[group_val] = entry
+    return result
+
+
+def _collect_leaf_data(node: dict) -> list[dict]:
+    """Lazily collect all leaf_data from a tree node and its descendants.
+
+    For leaf nodes (those with "leaf_data"), returns the leaf_data directly.
+    For non-leaf nodes (those with "children"), recursively collects from
+    all descendant leaf nodes.
+
+    This avoids storing duplicated leaf data at every hierarchy level,
+    reducing memory from O(n * depth) to O(n).
+    """
+    if "leaf_data" in node:
+        return node["leaf_data"]
+    result: list[dict] = []
+    for child_node in node.get("children", {}).values():
+        result.extend(_collect_leaf_data(child_node))
     return result
 
 
@@ -490,13 +505,17 @@ def _render_tree(
 
         is_open = (group_path in expand_state) if expand_state else False
 
-        # Only generate aggregated chart for collapsed groups
+        # Only generate aggregated chart for collapsed groups.
+        # For non-leaf nodes, lazily collect leaf data from descendants
+        # instead of relying on pre-computed copies (avoids O(n*depth) memory).
         agg_chart_div = html.Div(className="agg-chart")
-        if render_agg_fn and not is_open and "leaf_data" in data and data["leaf_data"]:
-            agg_chart_div = html.Div(
-                render_agg_fn(data["leaf_data"], dim, group_val, group_path),
-                className="agg-chart",
-            )
+        if render_agg_fn and not is_open:
+            agg_leaf_data = _collect_leaf_data(data)
+            if agg_leaf_data:
+                agg_chart_div = html.Div(
+                    render_agg_fn(agg_leaf_data, dim, group_val, group_path),
+                    className="agg-chart",
+                )
 
         summary = html.Summary(
             [label_span, count_span, agg_chart_div],
