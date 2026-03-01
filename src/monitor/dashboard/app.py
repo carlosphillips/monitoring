@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 import dash
 import dash_bootstrap_components as dbc
@@ -37,7 +36,6 @@ logger = logging.getLogger(__name__)
 def create_app(
     breaches_parquet: Path,
     attributions_parquet: Path,
-    debug: bool = False,
 ) -> dash.Dash:
     """Create and configure the Breach Pivot Dashboard Dash app.
 
@@ -47,7 +45,6 @@ def create_app(
     Args:
         breaches_parquet: Path to all_breaches_consolidated.parquet
         attributions_parquet: Path to all_attributions_consolidated.parquet
-        debug: Enable Dash debug mode (default False)
 
     Returns:
         Configured Dash app instance
@@ -69,7 +66,6 @@ def create_app(
         __name__,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         suppress_callback_exceptions=True,
-        debug=debug,
     )
 
     # Set app metadata
@@ -489,7 +485,6 @@ if __name__ == "__main__":
     app = create_app(
         breaches_parquet=Path("output/all_breaches_consolidated.parquet"),
         attributions_parquet=Path("output/all_attributions_consolidated.parquet"),
-        debug=debug_mode,
     )
 
     app.run(debug=debug_mode, host="127.0.0.1", port=8050)
