@@ -223,6 +223,26 @@ def dashboard(output_dir: Path, port: int, debug: bool) -> None:
 @click.option("--direction", multiple=True, help="Filter by direction(s)")
 @click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
 @click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
+@click.option("--abs-value-min", type=float, default=None, help="Min abs_value filter")
+@click.option("--abs-value-max", type=float, default=None, help="Max abs_value filter")
+@click.option("--distance-min", type=float, default=None, help="Min distance filter")
+@click.option("--distance-max", type=float, default=None, help="Max distance filter")
+@click.option(
+    "--group-filter", default=None,
+    help="Group filter in dim=val|dim=val format (e.g. portfolio=alpha|layer=tactical)",
+)
+@click.option(
+    "--brush-start", default=None,
+    help="Brush range start date (YYYY-MM-DD)",
+)
+@click.option(
+    "--brush-end", default=None,
+    help="Brush range end date (YYYY-MM-DD)",
+)
+@click.option(
+    "--selection", "selection_json", default=None,
+    help="JSON list of selection dicts for pivot filtering",
+)
 @click.option(
     "--format", "output_format",
     type=click.Choice(["csv", "json"]),
@@ -239,6 +259,14 @@ def query(
     direction: tuple[str, ...],
     start_date: str | None,
     end_date: str | None,
+    abs_value_min: float | None,
+    abs_value_max: float | None,
+    distance_min: float | None,
+    distance_max: float | None,
+    group_filter: str | None,
+    brush_start: str | None,
+    brush_end: str | None,
+    selection_json: str | None,
     output_format: str,
     limit: int | None,
 ) -> None:
@@ -251,7 +279,7 @@ def query(
 
     try:
         from monitor.dashboard.data import load_breaches
-        from monitor.dashboard.query_builder import build_where_clause
+        from monitor.dashboard.query_builder import build_selection_where, build_where_clause
     except ImportError:
         click.echo(
             "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
@@ -261,6 +289,15 @@ def query(
 
     conn = load_breaches(output_dir)
 
+    # Build abs_value_range / distance_range tuples from min/max options
+    abs_value_range: list[float] | None = None
+    if abs_value_min is not None and abs_value_max is not None:
+        abs_value_range = [abs_value_min, abs_value_max]
+
+    distance_range: list[float] | None = None
+    if distance_min is not None and distance_max is not None:
+        distance_range = [distance_min, distance_max]
+
     where_sql, params = build_where_clause(
         list(portfolio) or None,
         list(layer) or None,
@@ -269,9 +306,63 @@ def query(
         list(direction) or None,
         start_date,
         end_date,
-        None,  # abs_value_range
-        None,  # distance_range
+        abs_value_range,
+        distance_range,
     )
+
+    # Parse --group-filter into a selection dict and append its WHERE fragment
+    if group_filter:
+        group_selection: dict[str, str] = {
+            "type": "category",
+            "column_dim": None,
+            "column_value": None,
+            "group_key": group_filter,
+        }
+        sel_sql, sel_params = build_selection_where(group_selection, None, None)
+        if sel_sql:
+            if where_sql:
+                where_sql += " AND " + sel_sql
+            else:
+                where_sql = "WHERE " + sel_sql
+            params.extend(sel_params)
+
+    # Parse --selection JSON list and append each selection's WHERE fragment
+    if selection_json:
+        import json as json_mod
+
+        try:
+            selections = json_mod.loads(selection_json)
+        except json_mod.JSONDecodeError as exc:
+            click.echo(f"Invalid --selection JSON: {exc}", err=True)
+            sys.exit(1)
+
+        if not isinstance(selections, list):
+            click.echo("--selection must be a JSON list", err=True)
+            sys.exit(1)
+
+        for sel in selections:
+            sel_sql, sel_params = build_selection_where(sel, None, sel.get("column_dim"))
+            if sel_sql:
+                if where_sql:
+                    where_sql += " AND " + sel_sql
+                else:
+                    where_sql = "WHERE " + sel_sql
+                params.extend(sel_params)
+
+    # Apply brush date range filter
+    if brush_start or brush_end:
+        brush_conditions: list[str] = []
+        if brush_start:
+            brush_conditions.append("end_date >= ?")
+            params.append(brush_start)
+        if brush_end:
+            brush_conditions.append("end_date <= ?")
+            params.append(brush_end)
+        brush_sql = " AND ".join(brush_conditions)
+        if where_sql:
+            where_sql += " AND " + brush_sql
+        else:
+            where_sql = "WHERE " + brush_sql
 
     sql = f"SELECT * FROM breaches {where_sql} ORDER BY end_date DESC, portfolio, layer, factor"
     if limit is not None:

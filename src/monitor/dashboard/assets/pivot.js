@@ -59,9 +59,15 @@ document.addEventListener('click', function(e) {
 
     function getCatCells() {
         var cells = [];
-        document.querySelectorAll('[id]').forEach(function(el) {
+        // Only scan <td> elements (cat-cells are rendered as <td> in the
+        // category pivot table) instead of every element with an id.
+        document.querySelectorAll('td[id]').forEach(function(el) {
+            var raw = el.id;
+            // Quick string check before attempting JSON.parse to avoid
+            // expensive exceptions on non-cat-cell elements.
+            if (raw.indexOf('"cat-cell"') === -1) return;
             try {
-                var id = JSON.parse(el.id);
+                var id = JSON.parse(raw);
                 if (id && id.type === 'cat-cell') {
                     cells.push({el: el, col: id.col, group: id.group});
                 }
@@ -135,11 +141,12 @@ document.addEventListener('click', function(e) {
 
         } else if (e.key === 'Enter' && _focus) {
             e.preventDefault();
+            // Reuse `cells` from above instead of calling getCatCells() again;
+            // it is still in scope and avoids a duplicate DOM scan.
             var target = null;
-            var cells2 = getCatCells();
-            for (var j = 0; j < cells2.length; j++) {
-                if (cells2[j].col === _focus.col && cells2[j].group === _focus.group) {
-                    target = cells2[j];
+            for (var j = 0; j < cells.length; j++) {
+                if (cells[j].col === _focus.col && cells[j].group === _focus.group) {
+                    target = cells[j];
                     break;
                 }
             }

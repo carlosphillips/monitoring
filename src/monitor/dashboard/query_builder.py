@@ -8,6 +8,8 @@ context.
 
 from __future__ import annotations
 
+import re
+
 from monitor.dashboard.constants import (
     COLUMN_AXIS_DIMENSIONS,
     GROUPABLE_DIMENSIONS,
@@ -20,6 +22,13 @@ from monitor.dashboard.constants import (
 # Dash stores and inputs are client-side JSON that can be tampered with;
 # all values used as SQL identifiers MUST be validated against this set.
 VALID_SQL_COLUMNS = frozenset(GROUPABLE_DIMENSIONS) | frozenset(COLUMN_AXIS_DIMENSIONS)
+
+# Maximum number of selection dicts allowed in build_selection_where().
+# Client-side stores can be tampered with; cap to prevent query amplification.
+MAX_SELECTIONS = 50
+
+# Compiled regex for validating YYYY-MM-DD date strings from brush selections.
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def validate_sql_dimensions(
@@ -137,94 +146,16 @@ def append_where(
     return where_sql, params
 
 
-def build_brush_where(brush_range: dict | None) -> tuple[str, list[str]]:
-    """Build WHERE conditions from a brush time range.
-
-    Returns:
-        (sql_fragment, params) -- no "WHERE" prefix.
-    """
-    if not brush_range:
-        return "", []
-    start = brush_range.get("start")
-    end = brush_range.get("end")
-    if not start or not end:
-        return "", []
-    return "end_date >= ? AND end_date <= ?", [start, end]
-
-
-def _parse_group_key_conditions(
-    group_key: str,
-    conditions: list[str],
-    params: list[str],
-) -> None:
-    """Parse a pipe-delimited group key into SQL conditions and params.
-
-    Each segment has the form ``dim=value``.  Dimensions are validated
-    against the allow-list; unknown dimensions are silently skipped.
-    """
-    for part in group_key.split("|"):
-        if "=" not in part:
-            continue
-        dim, val = part.split("=", 1)
-        if dim not in GROUPABLE_DIMENSIONS:
-            continue
-        if dim == "factor" and val == NO_FACTOR_LABEL:
-            conditions.append("(factor IS NULL OR factor = '')")
-        else:
-            conditions.append(f'"{dim}" = ?')
-            params.append(val)
-
-
-def build_selection_where(
-    selections: list[dict] | dict | None,
-    granularity_override: str | None,
-    column_axis: str | None,
-) -> tuple[str, list[str]]:
-    """Build additional WHERE conditions from pivot selection(s).
-
-    Accepts a list of selection dicts (multi-select) or a single dict
-    (backward-compatible).  Multiple selections are OR'd together so the
-    detail view shows the union of all selected cells.
-
-    Returns:
-        (sql_fragment, params) -- the SQL does NOT include "WHERE" prefix.
-    """
-    # Normalise input: single dict → one-element list, None/empty → []
-    if selections is None:
-        selections = []
-    elif isinstance(selections, dict):
-        selections = [selections]
-
-    if not selections:
-        return "", []
-
-    parts: list[str] = []
-    all_params: list[str] = []
-    for sel in selections:
-        sql, params = _build_single_selection_where(
-            sel, granularity_override, column_axis,
-        )
-        if sql:
-            parts.append(f"({sql})")
-            all_params.extend(params)
-
-    if not parts:
-        return "", []
-    if len(parts) == 1:
-        # Avoid unnecessary parentheses for single selection
-        return parts[0].strip("()"), all_params
-    return " OR ".join(parts), all_params
-
-
 def _build_single_selection_where(
     selection: dict,
     granularity_override: str | None,
     column_axis: str | None,
 ) -> tuple[str, list[str]]:
-    """Build WHERE conditions from a single pivot selection dict."""
-    if not selection:
-        return "", []
+    """Build WHERE conditions for a single pivot selection dict.
 
+    Returns:
+        (sql_fragment, params) -- the SQL does NOT include "WHERE" prefix.
+    """
     sel_type = selection.get("type")
     conditions: list[str] = []
     params: list[str] = []
@@ -258,14 +189,112 @@ def _build_single_selection_where(
                 conditions.append(f'"{col_dim}" = ?')
                 params.append(col_value)
 
+        # Parse group key to add group filters
         if group_key and group_key != "__flat__":
-            _parse_group_key_conditions(group_key, conditions, params)
+            for part in group_key.split("|"):
+                if "=" in part:
+                    dim, val = part.split("=", 1)
+                    # Validate dim against allow-list before SQL interpolation
+                    if dim not in GROUPABLE_DIMENSIONS:
+                        continue
+                    if dim == "factor" and val == NO_FACTOR_LABEL:
+                        conditions.append("(factor IS NULL OR factor = '')")
+                    else:
+                        conditions.append(f'"{dim}" = ?')
+                        params.append(val)
 
     elif sel_type == "group":
         group_key = selection.get("group_key")
         if group_key:
-            _parse_group_key_conditions(group_key, conditions, params)
+            for part in group_key.split("|"):
+                if "=" in part:
+                    dim, val = part.split("=", 1)
+                    if dim not in GROUPABLE_DIMENSIONS:
+                        continue
+                    if dim == "factor" and val == NO_FACTOR_LABEL:
+                        conditions.append("(factor IS NULL OR factor = '')")
+                    else:
+                        conditions.append(f'"{dim}" = ?')
+                        params.append(val)
 
     if conditions:
         return " AND ".join(conditions), params
     return "", []
+
+
+def build_selection_where(
+    selection: dict | list[dict] | None,
+    granularity_override: str | None,
+    column_axis: str | None,
+) -> tuple[str, list[str]]:
+    """Build additional WHERE conditions from one or more pivot selections.
+
+    Accepts a single selection dict, a list of selection dicts, or None.
+    When multiple selections are provided they are OR'd together.
+    The list is capped at ``MAX_SELECTIONS`` to prevent query amplification
+    from a tampered client-side store.
+
+    Returns:
+        (sql_fragment, params) -- the SQL does NOT include "WHERE" prefix.
+    """
+    if not selection:
+        return "", []
+
+    # Normalise to list
+    if isinstance(selection, dict):
+        selections = [selection]
+    else:
+        selections = list(selection)
+
+    # Cap to prevent query amplification
+    if len(selections) > MAX_SELECTIONS:
+        selections = selections[:MAX_SELECTIONS]
+
+    # Build individual conditions for each selection and OR them together
+    or_fragments: list[str] = []
+    all_params: list[str] = []
+
+    for sel in selections:
+        frag, params = _build_single_selection_where(
+            sel, granularity_override, column_axis
+        )
+        if frag:
+            or_fragments.append(f"({frag})")
+            all_params.extend(params)
+
+    if not or_fragments:
+        return "", []
+
+    if len(or_fragments) == 1:
+        # Single selection: return without extra wrapping parens for backward compat
+        return or_fragments[0][1:-1], all_params
+
+    return " OR ".join(or_fragments), all_params
+
+
+def build_brush_where(
+    brush_range: dict | None,
+) -> tuple[str, list[str]]:
+    """Build a WHERE fragment from a brush (drag-select) date range.
+
+    The *brush_range* dict is expected to contain ``"start"`` and ``"end"``
+    keys whose values are date strings in ``YYYY-MM-DD`` format.  Values that
+    do not match this format are silently rejected to guard against tampered
+    store data causing DuckDB type errors.
+
+    Returns:
+        (sql_fragment, params) -- the SQL does NOT include a "WHERE" prefix.
+    """
+    if not brush_range:
+        return "", []
+
+    start = brush_range.get("start")
+    end = brush_range.get("end")
+
+    if not start or not end:
+        return "", []
+
+    if not _DATE_RE.match(start) or not _DATE_RE.match(end):
+        return "", []
+
+    return "end_date >= ? AND end_date <= ?", [start, end]

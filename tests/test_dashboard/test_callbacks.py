@@ -12,6 +12,7 @@ from monitor.dashboard.callbacks import (
 )
 from monitor.dashboard.callbacks import _extract_brush_range
 from monitor.dashboard.query_builder import (
+    MAX_SELECTIONS,
     append_where,
     build_brush_where,
     build_selection_where,
@@ -452,6 +453,44 @@ class TestBuildSelectionWhere:
         assert "OR" not in sql
 
 
+class TestBuildSelectionWhereCap:
+    """Tests for MAX_SELECTIONS cap in build_selection_where()."""
+
+    def test_selections_capped_at_max(self):
+        """Selections beyond MAX_SELECTIONS are silently dropped."""
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": f"portfolio_{i}",
+                "group_key": "__flat__",
+            }
+            for i in range(MAX_SELECTIONS + 10)
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert len(params) == MAX_SELECTIONS
+        for i in range(MAX_SELECTIONS, MAX_SELECTIONS + 10):
+            assert f"portfolio_{i}" not in params
+
+    def test_selections_at_max_not_truncated(self):
+        """Exactly MAX_SELECTIONS selections should all be kept."""
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": f"portfolio_{i}",
+                "group_key": "__flat__",
+            }
+            for i in range(MAX_SELECTIONS)
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert len(params) == MAX_SELECTIONS
+
+    def test_max_selections_constant_value(self):
+        """MAX_SELECTIONS should be 50, matching MAX_PIVOT_GROUPS pattern."""
+        assert MAX_SELECTIONS == 50
+
+
 class TestAppendWhere:
     """Tests for append_where() -- WHERE clause composition."""
 
@@ -632,6 +671,35 @@ class TestBuildBrushWhere:
         assert "end_date >= ?" in sql
         assert "end_date <= ?" in sql
         assert params == ["2024-01-01", "2024-01-31"]
+
+    def test_invalid_start_format(self):
+        sql, params = build_brush_where({"start": "not-a-date", "end": "2024-03-31"})
+        assert sql == ""
+        assert params == []
+
+    def test_invalid_end_format(self):
+        sql, params = build_brush_where({"start": "2024-01-01", "end": "bad"})
+        assert sql == ""
+        assert params == []
+
+    def test_sql_injection_attempt(self):
+        sql, params = build_brush_where(
+            {"start": "'; DROP TABLE breaches; --", "end": "2024-01-01"}
+        )
+        assert sql == ""
+        assert params == []
+
+    def test_datetime_with_time_rejected(self):
+        sql, params = build_brush_where(
+            {"start": "2024-01-01T00:00:00", "end": "2024-03-31"}
+        )
+        assert sql == ""
+        assert params == []
+
+    def test_partial_date_rejected(self):
+        sql, params = build_brush_where({"start": "2024-01", "end": "2024-03"})
+        assert sql == ""
+        assert params == []
 
 
 class TestBrushWhereIntegration:

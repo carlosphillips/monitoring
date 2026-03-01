@@ -44,6 +44,26 @@ _db_lock = threading.Lock()
 # We fetch one extra row to detect truncation without a separate COUNT query.
 DETAIL_TABLE_MAX_ROWS = 1000
 
+# Canonical column list for the detail / export queries.
+# Defined once so update_detail_table and export_csv stay in sync.
+_DETAIL_COLUMNS = (
+    "end_date",
+    "portfolio",
+    "layer",
+    "factor",
+    "window",
+    "direction",
+    "value",
+    "threshold_min",
+    "threshold_max",
+    "distance",
+    "abs_value",
+)
+_DETAIL_SELECT = (
+    'end_date, portfolio, layer, COALESCE(NULLIF(factor, \'\'), ?) AS factor, '
+    '"window", direction, value, threshold_min, threshold_max, distance, abs_value'
+)
+
 # Maximum number of entries in the filter history back stack.
 HISTORY_STACK_MAX = 20
 
@@ -118,12 +138,21 @@ def _get_column_axis_options(hierarchy: list[str]) -> list[dict]:
 
 
 def _build_full_where(
-    portfolios, layers, factors, windows, directions,
-    start_date, end_date, abs_value_range, distance_range,
-    pivot_selection, group_header_filter,
-    granularity_override, column_axis,
-    brush_range=None,
-) -> tuple[str, list]:
+    portfolios: list[str] | None,
+    layers: list[str] | None,
+    factors: list[str] | None,
+    windows: list[str] | None,
+    directions: list[str] | None,
+    start_date: str | None,
+    end_date: str | None,
+    abs_value_range: list[float] | None,
+    distance_range: list[float] | None,
+    pivot_selection: list[dict] | dict | None,
+    group_header_filter: dict | None,
+    granularity_override: str | None,
+    column_axis: str | None,
+    brush_range: dict | None = None,
+) -> tuple[str, list[str | float]]:
     """Build the complete WHERE clause combining filters, pivot selection, group header, and brush."""
     where_sql, params = build_where_clause(
         portfolios, layers, factors, windows, directions,
@@ -163,7 +192,7 @@ def _build_selected_cells_set(
     return result if result else None
 
 
-def _extract_brush_range(relayout_data: dict):
+def _extract_brush_range(relayout_data: dict) -> dict | None:
     """Extract brush range from Plotly relayoutData.
 
     Returns:
@@ -259,11 +288,7 @@ def register_callbacks(app: dash.Dash) -> None:
         )
 
         query = f"""
-            SELECT
-                end_date, portfolio, layer,
-                COALESCE(NULLIF(factor, ''), ?) AS factor,
-                "window", direction, value,
-                threshold_min, threshold_max, distance, abs_value
+            SELECT {_DETAIL_SELECT}
             FROM breaches
             {where_sql}
             ORDER BY end_date DESC, portfolio, layer, factor
@@ -339,11 +364,7 @@ def register_callbacks(app: dash.Dash) -> None:
         order_clause = "ORDER BY end_date DESC, portfolio, layer, factor"
         if sort_by:
             order_parts = []
-            valid_cols = {
-                "end_date", "portfolio", "layer", "factor", "window",
-                "direction", "value", "threshold_min", "threshold_max",
-                "distance", "abs_value",
-            }
+            valid_cols = set(_DETAIL_COLUMNS)
             for s in sort_by:
                 col = s.get("column_id", "")
                 if col in valid_cols:
@@ -353,11 +374,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 order_clause = "ORDER BY " + ", ".join(order_parts)
 
         query = f"""
-            SELECT
-                end_date, portfolio, layer,
-                COALESCE(NULLIF(factor, ''), ?) AS factor,
-                "window", direction, value,
-                threshold_min, threshold_max, distance, abs_value
+            SELECT {_DETAIL_SELECT}
             FROM breaches
             {where_sql}
             {order_clause}
@@ -513,10 +530,7 @@ def register_callbacks(app: dash.Dash) -> None:
     )
     def clear_pivot_selection(*args):
         """Clear all interaction state when filters change."""
-        current_focus = args[-1]
-        current_brush = args[-2]
-        current_group_filter = args[-3]
-        current_selection = args[-4]
+        current_selection, current_group_filter, current_brush, current_focus = args[-4:]
         if (not current_selection and current_group_filter is None
                 and current_brush is None and current_focus is None):
             return no_update, no_update, no_update, no_update, no_update
