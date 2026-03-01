@@ -1,7 +1,7 @@
 ---
 title: "refactor: Unified Analytics Context Engine"
 type: refactor
-status: phase-b-complete
+status: complete
 date: 2026-03-01
 origin: docs/brainstorms/2026-03-01-data-layer-refactor-brainstorm.md
 ---
@@ -785,19 +785,19 @@ All three call same underlying `AnalyticsContext` methods, so behavior is consis
 - CLI commands work as expected
 - All security tests pass
 
-### Phase C: Documentation & Cleanup (1 hour)
+### Phase C: Documentation & Cleanup (1 hour) ✅ COMPLETE
 
 **Milestone:** Agent system prompt ready, old modules deprecated
 
 **Prerequisites:** Phase B complete (operations.py working)
 
 **Tasks:**
-1. [ ] Document `operations.DashboardOperations` API in system prompt
-2. [ ] Add examples of common agent queries
-3. [ ] Mark `query_builder.py` and `dimensions.py` as deprecated (code moved to AnalyticsContext)
-4. [ ] Update docstrings and type hints across all new/modified files
-5. [ ] Add README: `docs/ANALYTICS_CONTEXT_ARCHITECTURE.md`
-6. [ ] Verify no CSV references remain in codebase (grep for .csv, to_csv, read_csv)
+1. [x] Document `operations.DashboardOperations` API in system prompt
+2. [x] Add examples of common agent queries
+3. [x] Mark `query_builder.py` and `dimensions.py` as deprecated (code moved to AnalyticsContext)
+4. [x] Update docstrings and type hints across all new/modified files
+5. [x] Add README: `docs/ANALYTICS_CONTEXT_ARCHITECTURE.md`
+6. [x] Verify no CSV references remain in codebase (grep for .csv, to_csv, read_csv)
 
 **Exit criteria:**
 - System prompt ready for agent integration

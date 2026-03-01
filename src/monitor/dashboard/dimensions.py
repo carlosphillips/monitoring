@@ -1,5 +1,14 @@
 """Dimensions registry: dimension metadata, validation, and constants.
 
+⚠️  DEPRECATED: This module is maintained for backward compatibility with Dash callbacks.
+    For new agent-driven code, use AnalyticsContext in analytics_context.py instead.
+
+Migration Guide:
+    Old: from monitor.dashboard.dimensions import Dimension, DimensionRegistry
+    New: from monitor.dashboard.analytics_context import AnalyticsContext
+         ctx = AnalyticsContext("./output")
+         options = ctx.get_filter_options()  # Get available dimensions
+
 This module provides a centralized registry for all dimensions in the breach dashboard,
 including their display labels, groupability, and available values. It replaces scattered
 dimension constants throughout the codebase.
@@ -9,6 +18,9 @@ Key Concepts:
 - Groupable: Can be used in row hierarchy for pivot tables
 - Column-axis: Can be used as column axis dimension
 - Allowlist: Set of valid values for SQL validation
+
+This module will continue to receive security updates but new features will be
+added to AnalyticsContext instead.
 """
 
 from __future__ import annotations

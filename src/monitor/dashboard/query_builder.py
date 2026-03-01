@@ -1,9 +1,21 @@
 """Query building utilities for the breach explorer dashboard.
 
+⚠️  DEPRECATED: This module is maintained for backward compatibility with Dash callbacks.
+    For new agent-driven code, use AnalyticsContext in analytics_context.py instead.
+
+Migration Guide:
+    Old: from monitor.dashboard.query_builder import build_where_clause
+    New: from monitor.dashboard.analytics_context import AnalyticsContext
+         ctx = AnalyticsContext("./output")
+         rows = ctx.query_breaches(...)
+
 Functions in this module construct parameterised SQL fragments (WHERE clauses,
-selection filters) used by the Dash callbacks.  They are intentionally free of
+selection filters) used by the Dash callbacks. They are intentionally free of
 any Dash or Flask imports so they can be unit-tested without an application
 context.
+
+This module will continue to receive security updates but new features will be
+added to AnalyticsContext instead.
 """
 
 from __future__ import annotations
