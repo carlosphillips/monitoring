@@ -31,6 +31,8 @@ class FilterSpec:
         Raises:
             ValueError: If dimension or values are invalid
         """
+        if not self.values:
+            raise ValueError("Filter values cannot be empty")
         if not DimensionValidator.validate_filter_values(self.dimension, self.values):
             raise ValueError(
                 f"Invalid filter: dimension={self.dimension}, values={self.values}"
@@ -67,6 +69,10 @@ class BreachQuery:
         # Validate GROUP BY dimensions
         if not DimensionValidator.validate_group_by(self.group_by):
             raise ValueError(f"Invalid GROUP BY dimensions: {self.group_by}")
+
+        # Check for duplicate dimensions
+        if len(self.group_by) != len(set(self.group_by)):
+            raise ValueError(f"Duplicate dimensions in GROUP BY: {self.group_by}")
 
         # Max 3 hierarchy levels
         if len(self.group_by) > 3:

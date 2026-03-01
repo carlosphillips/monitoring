@@ -175,6 +175,7 @@ class SQLInjectionValidator:
         "UPDATE",  # DML
         "EXEC",  # Execution
         "OR 1=1",  # Classic injection
+        "OR '1'='1",  # Classic injection with quotes
     ]
 
     @staticmethod
