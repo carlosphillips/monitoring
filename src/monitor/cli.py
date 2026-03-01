@@ -17,6 +17,151 @@ from monitor.windows import WINDOWS, slice_window
 
 logger = logging.getLogger("monitor")
 
+# Safety limit for unbounded queries to prevent memory exhaustion.
+DEFAULT_QUERY_LIMIT = 100_000
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for dashboard-ops commands
+# ---------------------------------------------------------------------------
+
+def _setup_logging() -> None:
+    """Configure logging for CLI commands (idempotent)."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
+
+def _get_analytics_context(output_dir: Path):
+    """Import and return AnalyticsContext, or exit with a clear error message.
+
+    Returns the *class*, not an instance -- callers should use it as a
+    context manager::
+
+        ctx_cls = _get_analytics_context(output_dir)
+        with ctx_cls(output_dir) as ctx:
+            ...
+    """
+    try:
+        from monitor.dashboard.analytics_context import AnalyticsContext
+    except ImportError:
+        click.echo(
+            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
+            err=True,
+        )
+        sys.exit(1)
+    return AnalyticsContext
+
+
+def _format_rows(rows: list[dict], output_format: str) -> str:
+    """Format a list of row dicts as CSV or JSON text."""
+    import json as json_mod
+
+    if output_format == "csv":
+        import csv as csv_mod
+        import io
+
+        if not rows:
+            return ""
+
+        buf = io.StringIO()
+        writer = csv_mod.writer(buf)
+        # Collect all unique keys from all rows, sorted for deterministic output
+        all_keys: set[str] = set()
+        for row in rows:
+            all_keys.update(row.keys())
+        keys = sorted(all_keys)
+
+        writer.writerow(keys)
+        for row in rows:
+            writer.writerow(row.get(key, "") for key in keys)
+        return buf.getvalue()
+    else:
+        # JSON output -- convert non-serializable types to strings
+        for record in rows:
+            for key, value in record.items():
+                if not isinstance(value, (str, int, float, bool, type(None))):
+                    record[key] = str(value)
+        return json_mod.dumps(rows, indent=2) + "\n"
+
+
+def _build_filter_kwargs(
+    portfolio: tuple[str, ...],
+    layer: tuple[str, ...],
+    factor: tuple[str, ...],
+    window: tuple[str, ...],
+    direction: tuple[str, ...],
+    start_date: str | None,
+    end_date: str | None,
+) -> dict:
+    """Build the common filter keyword arguments for AnalyticsContext methods."""
+    return {
+        "portfolios": list(portfolio) or None,
+        "layers": list(layer) or None,
+        "factors": list(factor) or None,
+        "windows": list(window) or None,
+        "directions": list(direction) or None,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+
+def _build_range_kwargs(
+    abs_value_min: float | None,
+    abs_value_max: float | None,
+    distance_min: float | None,
+    distance_max: float | None,
+) -> dict:
+    """Build abs_value_range / distance_range kwargs from min/max options."""
+    kwargs: dict = {}
+    if abs_value_min is not None and abs_value_max is not None:
+        kwargs["abs_value_range"] = [abs_value_min, abs_value_max]
+    if distance_min is not None and distance_max is not None:
+        kwargs["distance_range"] = [distance_min, distance_max]
+    return kwargs
+
+
+# Shared Click option decorators for dashboard-ops commands
+_output_dir_option = click.option(
+    "--output", "output_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default="./output",
+    help="Output directory containing breach data",
+)
+
+
+def _common_filter_options(func):
+    """Apply the standard set of filter options to a Click command."""
+    func = click.option("--portfolio", multiple=True, help="Filter by portfolio(s)")(func)
+    func = click.option("--layer", multiple=True, help="Filter by layer(s)")(func)
+    func = click.option("--factor", multiple=True, help="Filter by factor(s)")(func)
+    func = click.option("--window", multiple=True, help="Filter by window(s)")(func)
+    func = click.option("--direction", multiple=True, help="Filter by direction(s)")(func)
+    func = click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")(func)
+    func = click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")(func)
+    return func
+
+
+def _range_filter_options(func):
+    """Apply abs-value and distance range options to a Click command."""
+    func = click.option("--abs-value-min", type=float, default=None, help="Min abs_value filter")(func)
+    func = click.option("--abs-value-max", type=float, default=None, help="Max abs_value filter")(func)
+    func = click.option("--distance-min", type=float, default=None, help="Min distance filter")(func)
+    func = click.option("--distance-max", type=float, default=None, help="Max distance filter")(func)
+    return func
+
+
+def _format_option(default: str = "json"):
+    """Create a --format option with the given default."""
+    return click.option(
+        "--format", "output_format",
+        type=click.Choice(["csv", "json"]),
+        default=default,
+        help="Output format",
+    )
+
 
 class _DefaultGroup(click.Group):
     """Click group that falls back to 'run' when no known subcommand is given."""
@@ -381,10 +526,12 @@ def query(
         else:
             where_sql = "WHERE " + brush_sql
 
+    if limit is None:
+        limit = DEFAULT_QUERY_LIMIT
+
     sql = f"SELECT * FROM breaches {where_sql} ORDER BY end_date DESC, portfolio, layer, factor"
-    if limit is not None:
-        sql += " LIMIT ?"
-        params.append(limit)
+    sql += " LIMIT ?"
+    params.append(limit)
 
     result = conn.execute(sql, params)
     columns = [desc[0] for desc in result.description]
@@ -443,40 +590,33 @@ def filter_options(output_dir: Path) -> None:
     click.echo(json.dumps(options, indent=2))
 
 
-# === Dashboard Operations Commands (Phase B) ===
-# Agent-native CLI interface to dashboard operations
+# === Dashboard Analytics Commands (Phase B) ===
+# Agent-native CLI interface to breach analytics.
+#
+# These commands provide programmatic access to the same breach data that the
+# interactive dashboard visualises.  They complement the legacy top-level
+# ``query`` and ``filter-options`` commands which offer additional capabilities
+# (--brush-start/--brush-end, --group-filter, --selection) for browser-oriented
+# workflows.  The ``dashboard-ops`` commands are designed for agent consumption
+# and use ``AnalyticsContext`` as their backend.
 
 
 @main.group()
 def dashboard_ops() -> None:
-    """Dashboard operations for agents (agent-native interface)."""
-    pass
+    """Dashboard analytics for agents (agent-native interface).
+
+    These commands wrap AnalyticsContext to provide structured JSON/CSV
+    output suitable for programmatic consumption.  For interactive /
+    browser-oriented querying with brush-range and selection support, see
+    the top-level ``query`` and ``filter-options`` commands instead.
+    """
 
 
 @dashboard_ops.command()
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
-@click.option("--portfolio", multiple=True, help="Filter by portfolio(s)")
-@click.option("--layer", multiple=True, help="Filter by layer(s)")
-@click.option("--factor", multiple=True, help="Filter by factor(s)")
-@click.option("--window", multiple=True, help="Filter by window(s)")
-@click.option("--direction", multiple=True, help="Filter by direction(s)")
-@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
-@click.option("--abs-value-min", type=float, default=None, help="Min abs_value filter")
-@click.option("--abs-value-max", type=float, default=None, help="Max abs_value filter")
-@click.option("--distance-min", type=float, default=None, help="Min distance filter")
-@click.option("--distance-max", type=float, default=None, help="Max distance filter")
-@click.option(
-    "--format", "output_format",
-    type=click.Choice(["csv", "json"]),
-    default="json",
-    help="Output format",
-)
+@_output_dir_option
+@_common_filter_options
+@_range_filter_options
+@_format_option(default="json")
 @click.option("--limit", type=int, default=None, help="Max rows to return")
 def ops_query(
     output_dir: Path,
@@ -495,83 +635,28 @@ def ops_query(
     limit: int | None,
 ) -> None:
     """Query breach records with filters (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
+    _setup_logging()
+    AnalyticsContext = _get_analytics_context(output_dir)
 
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
+    if limit is None:
+        limit = DEFAULT_QUERY_LIMIT
 
-    import json as json_mod
-
-    with DashboardOperations(output_dir) as ops:
-        # Build abs_value_range / distance_range tuples from min/max options
-        abs_value_range: list[float] | None = None
-        if abs_value_min is not None and abs_value_max is not None:
-            abs_value_range = [abs_value_min, abs_value_max]
-
-        distance_range: list[float] | None = None
-        if distance_min is not None and distance_max is not None:
-            distance_range = [distance_min, distance_max]
-
-        rows = ops.query_breaches(
-            portfolios=list(portfolio) or None,
-            layers=list(layer) or None,
-            factors=list(factor) or None,
-            windows=list(window) or None,
-            directions=list(direction) or None,
-            start_date=start_date,
-            end_date=end_date,
-            abs_value_range=abs_value_range,
-            distance_range=distance_range,
+    with AnalyticsContext(output_dir) as ctx:
+        rows = ctx.query_breaches(
+            **_build_filter_kwargs(portfolio, layer, factor, window, direction, start_date, end_date),
+            **_build_range_kwargs(abs_value_min, abs_value_max, distance_min, distance_max),
             limit=limit,
         )
 
-    if output_format == "csv":
-        import csv as csv_mod
-        import io
-
-        if not rows:
-            click.echo("No results", err=True)
-            return
-
-        buf = io.StringIO()
-        writer = csv_mod.writer(buf)
-        # Get all unique keys from all rows
-        all_keys = set()
-        for row in rows:
-            all_keys.update(row.keys())
-        keys = sorted(all_keys)
-
-        writer.writerow(keys)
-        for row in rows:
-            writer.writerow(row.get(key, "") for key in keys)
-        click.echo(buf.getvalue(), nl=False)
-    else:
-        # JSON output
-        # Convert non-serializable types to strings
-        for record in rows:
-            for key, value in record.items():
-                if not isinstance(value, (str, int, float, bool, type(None))):
-                    record[key] = str(value)
-        click.echo(json_mod.dumps(rows, indent=2))
+    text = _format_rows(rows, output_format)
+    if not text and output_format == "csv":
+        click.echo("No results", err=True)
+        return
+    click.echo(text, nl=False)
 
 
 @dashboard_ops.command("hierarchy")
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
+@_output_dir_option
 @click.option(
     "--group-by",
     "hierarchy",
@@ -579,19 +664,8 @@ def ops_query(
     required=True,
     help="Dimensions to group by (e.g. --group-by portfolio --group-by layer)",
 )
-@click.option("--portfolio", multiple=True, help="Filter by portfolio(s)")
-@click.option("--layer", multiple=True, help="Filter by layer(s)")
-@click.option("--factor", multiple=True, help="Filter by factor(s)")
-@click.option("--window", multiple=True, help="Filter by window(s)")
-@click.option("--direction", multiple=True, help="Filter by direction(s)")
-@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
-@click.option(
-    "--format", "output_format",
-    type=click.Choice(["csv", "json"]),
-    default="json",
-    help="Output format",
-)
+@_common_filter_options
+@_format_option(default="json")
 def ops_hierarchy(
     output_dir: Path,
     hierarchy: tuple[str, ...],
@@ -605,83 +679,30 @@ def ops_hierarchy(
     output_format: str,
 ) -> None:
     """Query hierarchical aggregation of breaches (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
+    _setup_logging()
 
     if not hierarchy:
         click.echo("Error: --group-by required (at least one)", err=True)
         sys.exit(1)
 
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
+    AnalyticsContext = _get_analytics_context(output_dir)
 
-    import json as json_mod
-
-    with DashboardOperations(output_dir) as ops:
-        rows = ops.query_hierarchy(
+    with AnalyticsContext(output_dir) as ctx:
+        rows = ctx.query_hierarchy(
             hierarchy=list(hierarchy),
-            portfolios=list(portfolio) or None,
-            layers=list(layer) or None,
-            factors=list(factor) or None,
-            windows=list(window) or None,
-            directions=list(direction) or None,
-            start_date=start_date,
-            end_date=end_date,
+            **_build_filter_kwargs(portfolio, layer, factor, window, direction, start_date, end_date),
         )
 
-    if output_format == "csv":
-        import csv as csv_mod
-        import io
-
-        if not rows:
-            click.echo("No results", err=True)
-            return
-
-        buf = io.StringIO()
-        writer = csv_mod.writer(buf)
-        # Get all unique keys from all rows
-        all_keys = set()
-        for row in rows:
-            all_keys.update(row.keys())
-        keys = sorted(all_keys)
-
-        writer.writerow(keys)
-        for row in rows:
-            writer.writerow(row.get(key, "") for key in keys)
-        click.echo(buf.getvalue(), nl=False)
-    else:
-        # JSON output
-        # Convert non-serializable types to strings
-        for record in rows:
-            for key, value in record.items():
-                if not isinstance(value, (str, int, float, bool, type(None))):
-                    record[key] = str(value)
-        click.echo(json_mod.dumps(rows, indent=2))
+    text = _format_rows(rows, output_format)
+    if not text and output_format == "csv":
+        click.echo("No results", err=True)
+        return
+    click.echo(text, nl=False)
 
 
 @dashboard_ops.command("export")
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
-@click.option("--portfolio", multiple=True, help="Filter by portfolio(s)")
-@click.option("--layer", multiple=True, help="Filter by layer(s)")
-@click.option("--factor", multiple=True, help="Filter by factor(s)")
-@click.option("--window", multiple=True, help="Filter by window(s)")
-@click.option("--direction", multiple=True, help="Filter by direction(s)")
-@click.option("--start-date", default=None, help="Start date (YYYY-MM-DD)")
-@click.option("--end-date", default=None, help="End date (YYYY-MM-DD)")
+@_output_dir_option
+@_common_filter_options
 @click.option("--limit", type=int, default=None, help="Max rows to export (capped at 100000)")
 def ops_export(
     output_dir: Path,
@@ -695,30 +716,12 @@ def ops_export(
     limit: int | None,
 ) -> None:
     """Export breach data as CSV (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
+    _setup_logging()
+    AnalyticsContext = _get_analytics_context(output_dir)
 
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
-
-    with DashboardOperations(output_dir) as ops:
-        csv_data = ops.export_breaches_csv(
-            portfolios=list(portfolio) or None,
-            layers=list(layer) or None,
-            factors=list(factor) or None,
-            windows=list(window) or None,
-            directions=list(direction) or None,
-            start_date=start_date,
-            end_date=end_date,
+    with AnalyticsContext(output_dir) as ctx:
+        csv_data = ctx.export_csv(
+            **_build_filter_kwargs(portfolio, layer, factor, window, direction, start_date, end_date),
             limit=limit,
         )
 
@@ -726,96 +729,45 @@ def ops_export(
 
 
 @dashboard_ops.command("filters")
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
+@_output_dir_option
 def ops_filters(output_dir: Path) -> None:
     """Get available filter values (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
-
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
-
     import json
 
-    with DashboardOperations(output_dir) as ops:
-        options = ops.get_filter_options()
+    _setup_logging()
+    AnalyticsContext = _get_analytics_context(output_dir)
+
+    with AnalyticsContext(output_dir) as ctx:
+        options = ctx.get_filter_options()
 
     click.echo(json.dumps(options, indent=2))
 
 
 @dashboard_ops.command("stats")
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
+@_output_dir_option
 def ops_stats(output_dir: Path) -> None:
     """Get summary statistics about the dataset (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
-
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
-
     import json
 
-    with DashboardOperations(output_dir) as ops:
-        stats = ops.get_summary_stats()
+    _setup_logging()
+    AnalyticsContext = _get_analytics_context(output_dir)
+
+    with AnalyticsContext(output_dir) as ctx:
+        stats = ctx.get_summary_stats()
 
     click.echo(json.dumps(stats, indent=2))
 
 
 @dashboard_ops.command("date-range")
-@click.option(
-    "--output", "output_dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default="./output",
-    help="Output directory containing breach data",
-)
+@_output_dir_option
 def ops_date_range(output_dir: Path) -> None:
     """Get min and max dates from the dataset (agent-native)."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
-
-    try:
-        from monitor.dashboard.operations import DashboardOperations
-    except ImportError:
-        click.echo(
-            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
-
     import json
 
-    with DashboardOperations(output_dir) as ops:
-        min_date, max_date = ops.get_date_range()
+    _setup_logging()
+    AnalyticsContext = _get_analytics_context(output_dir)
+
+    with AnalyticsContext(output_dir) as ctx:
+        min_date, max_date = ctx.get_date_range()
 
     click.echo(json.dumps({"min_date": min_date, "max_date": max_date}, indent=2))

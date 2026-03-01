@@ -542,15 +542,21 @@ class AnalyticsContext:
 
     @staticmethod
     def _validate_date_string(date_str: str) -> bool:
-        """Validate date string format (YYYY-MM-DD).
+        """Validate date string format and semantic correctness (YYYY-MM-DD).
 
         Args:
             date_str: String to validate
 
         Returns:
-            True if valid date format, False otherwise
+            True if valid date format and semantically valid date, False otherwise
         """
-        return bool(_DATE_RE.match(date_str))
+        if not _DATE_RE.match(date_str):
+            return False
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
 
     @staticmethod
     def _validate_numeric_range(value_range: list[float] | None) -> bool:
@@ -565,7 +571,13 @@ class AnalyticsContext:
         if not value_range or len(value_range) != 2:
             return False
         min_val, max_val = value_range
-        return isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))
+        if not (isinstance(min_val, (int, float)) and isinstance(max_val, (int, float))):
+            return False
+        if math.isnan(min_val) or math.isnan(max_val):
+            return False
+        if math.isinf(min_val) or math.isinf(max_val):
+            return False
+        return min_val <= max_val
 
     @staticmethod
     def _sanitize_string_list(values: list[str] | None) -> list[str]:

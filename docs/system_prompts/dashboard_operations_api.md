@@ -1,7 +1,7 @@
-# System Prompt: Ralph Monitoring Dashboard Operations API
+# System Prompt: Ralph Monitoring Dashboard Analytics API
 
 **Status:** Phase C Agent Integration
-**Version:** 1.0
+**Version:** 1.1
 **Updated:** 2026-03-01
 
 ---
@@ -12,7 +12,7 @@ This system prompt defines the capabilities, constraints, and usage patterns for
 
 **Key Facts:**
 - **No browser automation required** — API is 100% Python/CLI-based
-- **Thread-safe singleton pattern** — Efficient multi-call operations
+- **Thread-safe design** — Instance-level lock protects all DuckDB operations
 - **Security-first design** — Parameterized SQL, input validation, row limits
 - **JSON-friendly outputs** — All results are native Python dicts/lists
 - **CLI support** — All operations available via command-line
@@ -26,30 +26,29 @@ This system prompt defines the capabilities, constraints, and usage patterns for
 Query individual breach records with multi-dimensional filtering:
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = get_operations_context("./output")
+with AnalyticsContext("./output") as ctx:
+    # Query with filters
+    breaches = ctx.query_breaches(
+        portfolios=["alpha", "beta"],           # Filter by portfolio(s)
+        layers=["tactical"],                    # Filter by layer (structural, tactical, residual)
+        factors=["HML", "SMB"],                # Filter by risk factor
+        windows=["daily", "monthly"],          # Filter by time window
+        directions=["upper"],                  # Filter by direction (upper or lower)
+        start_date="2024-01-01",               # Start date (YYYY-MM-DD)
+        end_date="2024-12-31",                 # End date (YYYY-MM-DD)
+        abs_value_range=[0.05, 1.0],           # [min, max] breach magnitude
+        distance_range=[0.0, 0.1],             # [min, max] distance from threshold
+        limit=500                              # Max rows (capped at 1,000)
+    )
 
-# Query with filters
-breaches = ops.query_breaches(
-    portfolios=["alpha", "beta"],           # Filter by portfolio(s)
-    layers=["tactical"],                    # Filter by layer (structural, tactical, residual)
-    factors=["HML", "SMB"],                # Filter by risk factor
-    windows=["daily", "monthly"],          # Filter by time window
-    directions=["upper"],                  # Filter by direction (upper or lower)
-    start_date="2024-01-01",               # Start date (YYYY-MM-DD)
-    end_date="2024-12-31",                 # End date (YYYY-MM-DD)
-    abs_value_range=[0.05, 1.0],           # [min, max] breach magnitude
-    distance_range=[0.0, 0.1],             # [min, max] distance from threshold
-    limit=500                              # Max rows (capped at 1,000)
-)
-
-# Each breach record contains:
-for breach in breaches:
-    print(f"{breach['end_date']} {breach['portfolio']} {breach['layer']}")
-    print(f"  Value: {breach['value']:.4f}")
-    print(f"  Direction: {breach['direction']} (magnitude: {breach['abs_value']:.4f})")
-    print(f"  Distance from threshold: {breach['distance']:.4f}")
+    # Each breach record contains:
+    for breach in breaches:
+        print(f"{breach['end_date']} {breach['portfolio']} {breach['layer']}")
+        print(f"  Value: {breach['value']:.4f}")
+        print(f"  Direction: {breach['direction']} (magnitude: {breach['abs_value']:.4f})")
+        print(f"  Distance from threshold: {breach['distance']:.4f}")
 ```
 
 **Return Structure:**
@@ -78,7 +77,7 @@ Group breach counts by dimensions for high-level analysis:
 
 ```python
 # Count breaches by portfolio and layer
-summary = ops.query_hierarchy(
+summary = ctx.query_hierarchy(
     hierarchy=["portfolio", "layer"],
     directions=["upper"],
     start_date="2024-01-01"
@@ -111,7 +110,7 @@ for row in summary:
 Discover available filter values to populate UIs or validate input:
 
 ```python
-options = ops.get_filter_options()
+options = ctx.get_filter_options()
 
 print("Available portfolios:", options["portfolio"])
 print("Available layers:", options["layer"])
@@ -136,11 +135,11 @@ print("Available directions:", options["direction"])
 Query the min and max dates in the dataset:
 
 ```python
-min_date, max_date = ops.get_date_range()
+min_date, max_date = ctx.get_date_range()
 print(f"Data spans from {min_date} to {max_date}")
 
 # Use in subsequent queries
-breaches = ops.query_breaches(
+breaches = ctx.query_breaches(
     start_date=min_date,
     end_date=max_date,
     limit=100
@@ -154,7 +153,7 @@ breaches = ops.query_breaches(
 Retrieve dataset statistics for analysis planning:
 
 ```python
-stats = ops.get_summary_stats()
+stats = ctx.get_summary_stats()
 
 print(f"Total breaches: {stats['total_breaches']}")
 print(f"Portfolios: {stats['dimensions']['portfolio']}")
@@ -182,7 +181,7 @@ print(f"Date range: {stats['date_range'][0]} to {stats['date_range'][1]}")
 Export breach records for external processing:
 
 ```python
-csv_data = ops.export_breaches_csv(
+csv_data = ctx.export_csv(
     portfolios=["alpha"],
     directions=["upper"],
     limit=50000
@@ -200,41 +199,33 @@ df = pd.read_csv(io.StringIO(csv_data))
 
 **Return:** CSV string with RFC 4180 formatting (max 100,000 rows)
 
-### 7. Get Detail Breach Records
-
-Alias for `query_breaches()` with more descriptive name:
-
-```python
-# Same as query_breaches(), but with explicit "detail" semantics
-details = ops.get_breach_detail(
-    portfolios=["alpha"],
-    limit=100
-)
-```
-
 ---
 
-## Singleton Pattern for Agents
+## Context Manager Usage
 
-For long-running agents or services, use the singleton pattern to avoid repeated initialization:
+AnalyticsContext supports the context manager protocol for automatic resource cleanup:
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-# First call: initialize singleton and load parquet
-ops = get_operations_context("./output")
+# Context manager ensures DuckDB connection is closed
+with AnalyticsContext("./output") as ctx:
+    breaches = ctx.query_breaches(portfolios=["alpha"])
+    stats = ctx.get_summary_stats()
+    # Connection automatically closed on exit
 
-# Subsequent calls: reuse same connection (no reload)
-ops2 = get_operations_context()
-assert ops is ops2  # Same object
-
-# Singleton automatically cleaned up on process exit
+# Or manual lifecycle management for long-running agents
+ctx = AnalyticsContext("./output")
+try:
+    breaches = ctx.query_breaches(portfolios=["alpha"])
+finally:
+    ctx.close()
 ```
 
 **Benefits:**
-- ~100-500ms initialization overhead avoided on subsequent calls
-- Single DuckDB connection shared across agent lifetime
-- Automatic cleanup via `atexit` handler
+- Single DuckDB connection per instance
+- Thread-safe via instance-level lock
+- Automatic cleanup with context manager
 
 ---
 
@@ -304,15 +295,15 @@ uv run monitor dashboard-ops stats \
 
 ## Security Guarantees
 
-The dashboard operations API implements defense-in-depth security:
+The analytics API implements defense-in-depth security:
 
 ### 1. SQL Injection Prevention
 
 All user inputs use **parameterized SQL queries** with `?` placeholders. No string interpolation.
 
 ```python
-# ✅ Safe: Uses parameterized query
-rows = ops.query_breaches(portfolios=["alpha'; DROP TABLE breaches; --"])
+# Safe: Uses parameterized query
+rows = ctx.query_breaches(portfolios=["alpha'; DROP TABLE breaches; --"])
 
 # Result: Returns 0 rows (no injection possible)
 ```
@@ -322,11 +313,11 @@ rows = ops.query_breaches(portfolios=["alpha'; DROP TABLE breaches; --"])
 All dimension names validated against allowlist before use in SQL:
 
 ```python
-# ❌ Raises ValueError
-ops.query_hierarchy(["invalid_dimension"])
+# Raises ValueError
+ctx.query_hierarchy(["invalid_dimension"])
 
-# ✅ Valid dimensions only: portfolio, layer, factor, window, direction, end_date
-ops.query_hierarchy(["portfolio", "layer"])
+# Valid dimensions only: portfolio, layer, factor, window, direction, end_date
+ctx.query_hierarchy(["portfolio", "layer"])
 ```
 
 ### 3. Row Limits
@@ -338,8 +329,8 @@ All queries enforce maximum row limits to prevent memory exhaustion:
 
 ```python
 # Limit enforced even if not specified
-rows = ops.query_breaches(limit=10000)  # Capped at 1,000
-csv = ops.export_breaches_csv(limit=150000)  # Capped at 100,000
+rows = ctx.query_breaches(limit=10000)  # Capped at 1,000
+csv = ctx.export_csv(limit=150000)  # Capped at 100,000
 ```
 
 ### 4. Input Validation
@@ -347,34 +338,36 @@ csv = ops.export_breaches_csv(limit=150000)  # Capped at 100,000
 All inputs validated for type and format:
 
 ```python
-# ❌ Invalid date format
-ops.query_breaches(start_date="01/01/2024")  # Raises ValueError
+# Invalid date format
+ctx.query_breaches(start_date="01/01/2024")  # Raises ValueError
 
-# ✅ Correct format
-ops.query_breaches(start_date="2024-01-01")
+# Correct format
+ctx.query_breaches(start_date="2024-01-01")
 
-# ❌ Invalid numeric range
-ops.query_breaches(abs_value_range=[1, 2, 3])  # Raises ValueError (needs exactly 2 values)
+# Invalid numeric range
+ctx.query_breaches(abs_value_range=[1, 2, 3])  # Raises ValueError (needs exactly 2 values)
 
-# ✅ Correct range
-ops.query_breaches(abs_value_range=[0.5, 1.0])
+# Correct range
+ctx.query_breaches(abs_value_range=[0.5, 1.0])
 ```
 
 ### 5. Thread Safety
 
-All DuckDB operations protected by lock to prevent concurrent access:
+All DuckDB operations protected by instance-level lock to prevent concurrent access:
 
 ```python
 # Safe for multi-threaded agents
 import concurrent.futures
 
+ctx = AnalyticsContext("./output")
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
     futures = [
-        executor.submit(ops.query_breaches, portfolios=["alpha"]),
-        executor.submit(ops.query_breaches, portfolios=["beta"]),
-        executor.submit(ops.query_breaches, portfolios=["gamma"]),
+        executor.submit(ctx.query_breaches, portfolios=["alpha"]),
+        executor.submit(ctx.query_breaches, portfolios=["beta"]),
+        executor.submit(ctx.query_breaches, portfolios=["gamma"]),
     ]
     results = [f.result() for f in futures]
+ctx.close()
 ```
 
 ---
@@ -384,13 +377,13 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
 All methods raise `ValueError` for invalid inputs:
 
 ```python
-from monitor.dashboard.operations import DashboardOperations
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = DashboardOperations("./output")
+ctx = AnalyticsContext("./output")
 
 # Catch validation errors
 try:
-    ops.query_breaches(start_date="invalid")
+    ctx.query_breaches(start_date="invalid")
 except ValueError as e:
     print(f"Validation failed: {e}")
 
@@ -414,13 +407,13 @@ except ValueError as e:
 
 Typical operation latencies:
 
-- **Initialization:** ~100-500ms (first call to `get_operations_context()`)
+- **Initialization:** ~100-500ms (creating AnalyticsContext and loading parquet)
 - **Simple query:** ~10-50ms (filtered breach query)
 - **Hierarchy query:** ~50-200ms (aggregation with grouping)
 - **CSV export:** ~100-1000ms (depends on row count and limit)
 
 **Optimization Tips:**
-1. Use singleton pattern for agents (initialize once, reuse)
+1. Reuse AnalyticsContext instances for multiple queries (initialize once, reuse)
 2. Filter aggressively (start with small result sets)
 3. Use appropriate limits (1,000 for detail, 100,000 for export)
 4. Batch operations when possible
@@ -432,85 +425,81 @@ Typical operation latencies:
 ### Use Case 1: Portfolio Risk Dashboard
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = get_operations_context("./output")
+with AnalyticsContext("./output") as ctx:
+    # Get high-level summary
+    summary = ctx.query_hierarchy(["portfolio", "layer"])
+    for row in summary:
+        portfolio, layer = row["portfolio"], row["layer"]
+        count = row["breach_count"]
+        print(f"{portfolio:15} {layer:12} {count:5} breaches")
 
-# Get high-level summary
-summary = ops.query_hierarchy(["portfolio", "layer"])
-for row in summary:
-    portfolio, layer = row["portfolio"], row["layer"]
-    count = row["breach_count"]
-    print(f"{portfolio:15} {layer:12} {count:5} breaches")
+    # Get recent critical breaches
+    critical = ctx.query_breaches(
+        directions=["upper"],
+        abs_value_range=[0.1, float('inf')],
+        limit=50
+    )
 
-# Get recent critical breaches
-critical = ops.query_breaches(
-    directions=["upper"],
-    abs_value_range=[0.1, float('inf')],
-    limit=50
-)
-
-print(f"\nRecent critical breaches ({len(critical)} total):")
-for b in critical:
-    print(f"  {b['end_date']} {b['portfolio']} {b['layer']} {b['value']:.4f}")
+    print(f"\nRecent critical breaches ({len(critical)} total):")
+    for b in critical:
+        print(f"  {b['end_date']} {b['portfolio']} {b['layer']} {b['value']:.4f}")
 ```
 
 ### Use Case 2: Time Series Analysis
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = get_operations_context("./output")
+with AnalyticsContext("./output") as ctx:
+    # Get breach counts by date
+    daily = ctx.query_hierarchy(
+        ["end_date"],
+        start_date="2024-01-01",
+        end_date="2024-12-31"
+    )
 
-# Get breach counts by date
-daily = ops.query_hierarchy(
-    ["end_date"],
-    start_date="2024-01-01",
-    end_date="2024-12-31"
-)
-
-# Plot or analyze
-for row in daily:
-    date = row["end_date"]
-    count = row["breach_count"]
-    print(f"{date}: {count:4} breaches")
+    # Plot or analyze
+    for row in daily:
+        date = row["end_date"]
+        count = row["breach_count"]
+        print(f"{date}: {count:4} breaches")
 ```
 
 ### Use Case 3: Factor Analysis
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = get_operations_context("./output")
+with AnalyticsContext("./output") as ctx:
+    # Breaches by factor
+    factors = ctx.query_hierarchy(
+        ["factor"],
+        start_date="2024-01-01"
+    )
 
-# Breaches by factor
-factors = ops.query_hierarchy(
-    ["factor"],
-    start_date="2024-01-01"
-)
-
-# Find highest-risk factors
-factors_sorted = sorted(factors, key=lambda x: x["breach_count"], reverse=True)
-for row in factors_sorted[:10]:
-    factor = row["factor"] or "(residual)"
-    count = row["breach_count"]
-    print(f"{factor:15} {count:4} breaches")
+    # Find highest-risk factors
+    factors_sorted = sorted(factors, key=lambda x: x["breach_count"], reverse=True)
+    for row in factors_sorted[:10]:
+        factor = row["factor"] or "(residual)"
+        count = row["breach_count"]
+        print(f"{factor:15} {count:4} breaches")
 ```
 
 ### Use Case 4: Export and External Processing
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 import pandas as pd
 import io
 
-ops = get_operations_context("./output")
-
-# Export tactical layer breaches
-csv = ops.export_breaches_csv(
-    layers=["tactical"],
-    limit=10000
-)
+with AnalyticsContext("./output") as ctx:
+    # Export tactical layer breaches
+    csv = ctx.export_csv(
+        layers=["tactical"],
+        limit=10000
+    )
 
 # Load with pandas
 df = pd.read_csv(io.StringIO(csv))
@@ -525,57 +514,51 @@ print(df.groupby("factor").agg({
 ### Use Case 5: Alert Generation
 
 ```python
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-ops = get_operations_context("./output")
+with AnalyticsContext("./output") as ctx:
+    # Get today's breaches
+    today_breaches = ctx.query_breaches(
+        start_date="2024-12-31",
+        end_date="2024-12-31"
+    )
 
-# Get today's breaches
-today_breaches = ops.query_breaches(
-    start_date="2024-12-31",
-    end_date="2024-12-31"
-)
+    # Generate alerts for severe breaches
+    alerts = []
+    for breach in today_breaches:
+        if breach["abs_value"] > 0.15:  # Severe threshold
+            alerts.append({
+                "portfolio": breach["portfolio"],
+                "layer": breach["layer"],
+                "severity": "CRITICAL",
+                "value": breach["value"],
+                "distance": breach["distance"]
+            })
 
-# Generate alerts for severe breaches
-alerts = []
-for breach in today_breaches:
-    if breach["abs_value"] > 0.15:  # Severe threshold
-        alerts.append({
-            "portfolio": breach["portfolio"],
-            "layer": breach["layer"],
-            "severity": "CRITICAL",
-            "value": breach["value"],
-            "distance": breach["distance"]
-        })
-
-# Send alerts
-for alert in alerts:
-    print(f"ALERT: {alert['portfolio']} {alert['layer']} {alert['severity']}")
+    # Send alerts
+    for alert in alerts:
+        print(f"ALERT: {alert['portfolio']} {alert['layer']} {alert['severity']}")
 ```
 
 ---
 
 ## Integration with Dash Web App
 
-The same singleton context is used by the Dash web dashboard:
+AnalyticsContext can be used alongside the Dash web dashboard:
 
 ```python
 from monitor.dashboard.app import create_app
-from monitor.dashboard.operations import get_operations_context
+from monitor.dashboard.analytics_context import AnalyticsContext
 
-# Create Dash app
+# Create Dash app (for web UI)
 app = create_app("./output")
 
-# DashboardOperations singleton is available to:
-# 1. Dash callbacks
-# 2. External agents
-# 3. CLI commands
-
-# Access in callbacks:
-ops = get_operations_context()
-breaches = ops.query_breaches(limit=100)
+# Use AnalyticsContext directly for programmatic access
+with AnalyticsContext("./output") as ctx:
+    breaches = ctx.query_breaches(limit=100)
 ```
 
-This ensures consistency between web UI and agent API.
+This ensures consistent query behavior between web UI and agent API.
 
 ---
 
@@ -590,9 +573,9 @@ df = pd.read_csv("breaches.csv")  # Load full file (~MB)
 tactical = df[df["layer"] == "tactical"]
 
 # New way (API-based, efficient)
-from monitor.dashboard.operations import get_operations_context
-ops = get_operations_context("./output")
-tactical = ops.query_breaches(layers=["tactical"])  # Filtered query
+from monitor.dashboard.analytics_context import AnalyticsContext
+with AnalyticsContext("./output") as ctx:
+    tactical = ctx.query_breaches(layers=["tactical"])  # Filtered query
 
 # New way is:
 # - Faster (no full CSV load)
@@ -623,21 +606,39 @@ uv run monitor run --output ./output
 ```python
 # Check dimension is valid
 # Valid: portfolio, layer, factor, window, direction, end_date
-ops.query_hierarchy(["portfolio"])  # ✅
-ops.query_hierarchy(["Portfolio"])  # ❌ Case-sensitive
+ctx.query_hierarchy(["portfolio"])  # Valid
+ctx.query_hierarchy(["Portfolio"])  # Invalid - case-sensitive
 ```
 
 ### "No results returned"
 ```python
 # Verify filters match available data
-ops = get_operations_context("./output")
-options = ops.get_filter_options()
-print(options["portfolio"])  # Check available portfolios
+with AnalyticsContext("./output") as ctx:
+    options = ctx.get_filter_options()
+    print(options["portfolio"])  # Check available portfolios
 ```
 
 ---
 
+## Known Limitations
+
+### Time-Series and Pivot Analysis (Planned)
+
+The following dashboard analytical views are not yet available via the API or CLI:
+
+- **Time-series bucketing**: Aggregate breach counts by configurable time periods (Daily/Weekly/Monthly/Quarterly/Yearly) with direction split. Currently only available in the dashboard UI.
+- **Category pivot**: Cross-tabulate breaches by any dimension combination x direction. Currently only available in the dashboard UI.
+
+These will be added as `query_time_series()` and `query_pivot()` methods in a future release. For now, use `query_breaches()` with date filters and post-process results for time-based analysis.
+
+---
+
 ## Version History
+
+**v1.1 (2026-03-01)**
+- Removed DashboardOperations passthrough wrapper
+- All examples now use AnalyticsContext directly
+- Removed singleton pattern (use context manager or manual lifecycle instead)
 
 **v1.0 (2026-03-01)**
 - Initial system prompt for Phase C
@@ -652,8 +653,7 @@ print(options["portfolio"])  # Check available portfolios
 
 - **API Guide:** `docs/OPERATIONS_API_GUIDE.md` — Detailed reference with code examples
 - **Architecture:** `docs/ANALYTICS_CONTEXT_ARCHITECTURE.md` — System design and data flow
-- **Implementation:** `src/monitor/dashboard/operations.py` — Source code
-- **Tests:** `tests/test_dashboard/test_operations*.py` — Test suites
+- **Implementation:** `src/monitor/dashboard/analytics_context.py` — Source code
 - **CLI:** `src/monitor/cli.py` — Command-line interface
 
 ---
