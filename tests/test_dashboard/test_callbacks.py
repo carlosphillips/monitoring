@@ -714,6 +714,13 @@ class TestHistoryStackMax:
 class TestCallbacksIntegration:
     """Test callbacks using the Dash test client."""
 
+    def test_app_has_keyboard_focus_store(self, sample_output):
+        from monitor.dashboard.app import create_app
+
+        app = create_app(sample_output)
+        layout_str = str(app.layout)
+        assert "keyboard-focus-store" in layout_str
+
     def test_app_has_apply_and_back_buttons(self, sample_output):
         from monitor.dashboard.app import create_app
 

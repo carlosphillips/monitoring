@@ -501,22 +501,26 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("group-header-filter-store", "data", allow_duplicate=True),
         Output("pivot-selection-anchor-store", "data", allow_duplicate=True),
         Output("brush-range-store", "data", allow_duplicate=True),
+        Output("keyboard-focus-store", "data", allow_duplicate=True),
         *FILTER_INPUTS,
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
         State("pivot-selection-store", "data"),
         State("group-header-filter-store", "data"),
         State("brush-range-store", "data"),
+        State("keyboard-focus-store", "data"),
         prevent_initial_call=True,
     )
     def clear_pivot_selection(*args):
-        """Clear pivot selection, anchor, group header filter, and brush when filters change."""
-        current_brush = args[-1]
-        current_group_filter = args[-2]
-        current_selection = args[-3]
-        if not current_selection and current_group_filter is None and current_brush is None:
-            return no_update, no_update, no_update, no_update
-        return [], None, None, None
+        """Clear all interaction state when filters change."""
+        current_focus = args[-1]
+        current_brush = args[-2]
+        current_group_filter = args[-3]
+        current_selection = args[-4]
+        if (not current_selection and current_group_filter is None
+                and current_brush is None and current_focus is None):
+            return no_update, no_update, no_update, no_update, no_update
+        return [], None, None, None, None
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),

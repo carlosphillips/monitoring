@@ -7,3 +7,9 @@ details[open] > summary .agg-chart {
 .group-header-label:hover {
     text-decoration: underline;
 }
+
+/* Keyboard focus outline for category cells */
+.keyboard-focus {
+    outline: 2px solid #0d6efd !important;
+    outline-offset: -2px;
+}

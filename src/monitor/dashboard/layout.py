@@ -40,6 +40,7 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
             dcc.Store(id="pivot-selection-anchor-store", data=None),
             dcc.Store(id="brush-range-store", data=None),
             dcc.Store(id="filter-history-stack-store", data=[]),
+            dcc.Store(id="keyboard-focus-store", data=None),
             # Header
             dbc.Navbar(
                 dbc.Container(

@@ -50,3 +50,110 @@ document.addEventListener('click', function(e) {
         }});
     }
 }, true);  // capture phase — fires before Dash callbacks
+
+// --- Keyboard navigation for category mode ---
+// Manages focus on cat-cell elements via arrow keys, Enter, and Escape.
+// Focus state is tracked in JS and synced to keyboard-focus-store.
+(function() {
+    var _focus = null;  // {col: string, group: string} or null
+
+    function getCatCells() {
+        var cells = [];
+        document.querySelectorAll('[id]').forEach(function(el) {
+            try {
+                var id = JSON.parse(el.id);
+                if (id && id.type === 'cat-cell') {
+                    cells.push({el: el, col: id.col, group: id.group});
+                }
+            } catch(e) {}
+        });
+        return cells;
+    }
+
+    function updateVisual() {
+        document.querySelectorAll('.keyboard-focus').forEach(function(el) {
+            el.classList.remove('keyboard-focus');
+        });
+        if (!_focus) return;
+        var cells = getCatCells();
+        for (var i = 0; i < cells.length; i++) {
+            if (cells[i].col === _focus.col && cells[i].group === _focus.group) {
+                cells[i].el.classList.add('keyboard-focus');
+                break;
+            }
+        }
+    }
+
+    function syncStore() {
+        var store = document.getElementById('keyboard-focus-store');
+        if (store) {
+            store._dashprivate_setProps({data: _focus});
+        }
+    }
+
+    document.addEventListener('keydown', function(e) {
+        // Ignore if focus is inside an input, dropdown, or other form element
+        var tag = document.activeElement && document.activeElement.tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+        var cells = getCatCells();
+        if (!cells.length) return;  // No category cells visible (timeline mode)
+
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            var groupCells = _focus
+                ? cells.filter(function(c) { return c.group === _focus.group; })
+                : cells;
+
+            // If focused group no longer exists, start fresh
+            if (!groupCells.length) {
+                _focus = null;
+                groupCells = cells;
+            }
+
+            var currentIdx = -1;
+            if (_focus) {
+                for (var i = 0; i < groupCells.length; i++) {
+                    if (groupCells[i].col === _focus.col && groupCells[i].group === _focus.group) {
+                        currentIdx = i;
+                        break;
+                    }
+                }
+                if (currentIdx === -1) _focus = null;  // Cell gone after re-render
+            }
+
+            var newIdx;
+            if (e.key === 'ArrowRight') {
+                newIdx = (currentIdx + 1) % groupCells.length;
+            } else {
+                newIdx = (currentIdx - 1 + groupCells.length) % groupCells.length;
+            }
+
+            _focus = {col: groupCells[newIdx].col, group: groupCells[newIdx].group};
+            updateVisual();
+            syncStore();
+
+        } else if (e.key === 'Enter' && _focus) {
+            e.preventDefault();
+            var target = null;
+            var cells2 = getCatCells();
+            for (var j = 0; j < cells2.length; j++) {
+                if (cells2[j].col === _focus.col && cells2[j].group === _focus.group) {
+                    target = cells2[j];
+                    break;
+                }
+            }
+            if (target) target.el.click();
+
+        } else if (e.key === 'Escape') {
+            _focus = null;
+            updateVisual();
+            syncStore();
+            // Also clear selection
+            var selStore = document.getElementById('pivot-selection-store');
+            if (selStore) {
+                selStore._dashprivate_setProps({data: []});
+            }
+        }
+    });
+})();
