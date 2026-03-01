@@ -26,8 +26,11 @@ def auto_granularity(min_date: str, max_date: str) -> str:
 
     < 90 days -> Daily, < 365 days -> Weekly, >= 365 days -> Monthly.
     """
-    d_min = date.fromisoformat(min_date)
-    d_max = date.fromisoformat(max_date)
+    # Parse datetime strings (e.g., '2023-01-02 00:00:00') and extract date part
+    min_date_str = min_date.split()[0] if ' ' in min_date else min_date
+    max_date_str = max_date.split()[0] if ' ' in max_date else max_date
+    d_min = date.fromisoformat(min_date_str)
+    d_max = date.fromisoformat(max_date_str)
     span = (d_max - d_min).days
 
     if span < DAILY_THRESHOLD:

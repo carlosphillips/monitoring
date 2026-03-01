@@ -205,9 +205,22 @@ def _extract_brush_range(relayout_data: dict) -> dict | None:
     start = relayout_data.get("xaxis.range[0]")
     end = relayout_data.get("xaxis.range[1]")
     if start is not None and end is not None:
-        # Plotly may return dates as "2024-01-15" or "2024-01-15 00:00:00"
-        # Truncate to YYYY-MM-DD for DuckDB date comparison
-        return {"start": str(start)[:10], "end": str(end)[:10]}
+        # Plotly may return:
+        # - dates as strings: "2024-01-15" or "2024-01-15 00:00:00"
+        # - numeric timestamps in milliseconds (for date axes): 1705276800000
+        # Convert numeric timestamps to ISO date strings, then truncate to YYYY-MM-DD
+        try:
+            # Try to parse as float (numeric timestamp in ms)
+            start_ms = float(start)
+            end_ms = float(end)
+            # Convert milliseconds to seconds and then to ISO date string
+            start_str = datetime.fromtimestamp(start_ms / 1000).date().isoformat()
+            end_str = datetime.fromtimestamp(end_ms / 1000).date().isoformat()
+        except (ValueError, TypeError, OSError):
+            # If numeric conversion fails, treat as string
+            start_str = str(start)[:10]
+            end_str = str(end)[:10]
+        return {"start": start_str, "end": end_str}
     return no_update
 
 
@@ -716,8 +729,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("filter-date-range", "end_date", allow_duplicate=True),
         Output("brush-range-store", "data", allow_duplicate=True),
         Output("filter-history-stack-store", "data", allow_duplicate=True),
-        Input("apply-brush-btn", "n_clicks"),
-        State("brush-range-store", "data"),
+        Input("brush-range-store", "data"),
         State("filter-date-range", "start_date"),
         State("filter-date-range", "end_date"),
         State("group-header-filter-store", "data"),
@@ -725,13 +737,17 @@ def register_callbacks(app: dash.Dash) -> None:
         State("filter-history-stack-store", "data"),
         prevent_initial_call=True,
     )
-    def apply_brush(
-        n_clicks, brush_range,
+    def auto_apply_brush(
+        brush_range,
         current_start, current_end,
         group_filter, pivot_selection, history_stack,
     ):
-        """Apply brush range to date filters and push current state to history."""
-        if not n_clicks or not brush_range:
+        """Automatically apply brush range to date filters when brush changes.
+
+        This keeps the UI in sync: when a user brushes on the timeline,
+        the date filters update immediately without requiring a manual button click.
+        """
+        if not brush_range:
             return no_update, no_update, no_update, no_update
 
         start = brush_range.get("start")
@@ -739,7 +755,12 @@ def register_callbacks(app: dash.Dash) -> None:
         if not start or not end:
             return no_update, no_update, no_update, no_update
 
-        # Push current state onto the history stack
+        # Only apply if the brush range is different from current filters
+        # (to avoid unnecessary updates)
+        if start == current_start and end == current_end:
+            return no_update, no_update, no_update, no_update
+
+        # Push current state onto the history stack before applying brush
         snapshot = {
             "start_date": current_start,
             "end_date": current_end,
@@ -752,6 +773,7 @@ def register_callbacks(app: dash.Dash) -> None:
         if len(stack) > HISTORY_STACK_MAX:
             stack = stack[-HISTORY_STACK_MAX:]
 
+        # Apply brush range to date filters and clear brush selection
         return start, end, None, stack
 
     @app.callback(
