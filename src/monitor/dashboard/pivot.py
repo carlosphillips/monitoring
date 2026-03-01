@@ -114,6 +114,7 @@ def build_category_table(
     hierarchy: list[str] | None = None,
     expand_state: set[str] | None = None,
     active_group_filter: str | None = None,
+    selected_cells: set[tuple[str, str]] | None = None,
 ) -> list:
     """Build a category mode pivot table with split-color cells.
 
@@ -124,6 +125,7 @@ def build_category_table(
         hierarchy: Optional list of row hierarchy dimensions.
         expand_state: Set of group paths that should be open.
         active_group_filter: Currently active group header filter path.
+        selected_cells: Set of (col_value, group_key) tuples to highlight.
 
     Returns:
         List of Dash HTML components.
@@ -140,7 +142,10 @@ def build_category_table(
         def _category_leaf(leaf_data, dim, group_val):
             cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
             group_key = f"{dim}={group_val}"
-            return _render_category_html_table(cells, column_dim, col_values, group_key)
+            return _render_category_html_table(
+                cells, column_dim, col_values, group_key,
+                selected_cells=selected_cells,
+            )
 
         def _category_agg(leaf_data, dim, group_val):
             """Render aggregated category cells for collapsed groups."""
@@ -161,7 +166,10 @@ def build_category_table(
         {str(row[column_dim]) for row in category_data if row[column_dim] is not None}
     )
     cells = _aggregate_category_cells(category_data, column_dim, col_values)
-    return [_render_category_html_table(cells, column_dim, col_values)]
+    return [_render_category_html_table(
+        cells, column_dim, col_values,
+        selected_cells=selected_cells,
+    )]
 
 
 def _aggregate_category_cells(
@@ -186,11 +194,16 @@ def _render_category_html_table(
     col_values: list[str],
     group_key: str | None = None,
     static: bool = False,
+    selected_cells: set[tuple[str, str]] | None = None,
 ) -> html.Table:
     """Render a single category table with split-color cells.
 
     Each cell has a blue (upper) top section and red (lower) bottom section.
     Background intensity scales with breach count.
+
+    Args:
+        selected_cells: Set of (col_value, group_key) tuples that are selected.
+            Selected cells get a 2px dark border.
     """
     dim_label = DIMENSION_LABELS.get(column_dim, column_dim.title())
 
@@ -241,23 +254,29 @@ def _render_category_html_table(
             },
         )
     ]
+    effective_group = group_key or "__flat__"
     for cv in col_values:
         upper = cells[cv]["upper"]
         lower = cells[cv]["lower"]
         total = upper + lower
         intensity = min(total / max_count, 1.0) if max_count > 0 else 0
 
+        is_selected = (
+            selected_cells is not None
+            and (cv, effective_group) in selected_cells
+        )
+
         td_kwargs = {
             "style": {
                 "textAlign": "center",
                 "padding": "0",
                 "cursor": "default" if static else "pointer",
-                "border": "1px solid #dee2e6",
+                "border": "2px solid #333" if is_selected else "1px solid #dee2e6",
                 "minWidth": "80px",
             },
         }
         if not static:
-            td_kwargs["id"] = {"type": "cat-cell", "col": cv, "group": group_key or "__flat__"}
+            td_kwargs["id"] = {"type": "cat-cell", "col": cv, "group": effective_group}
             td_kwargs["n_clicks"] = 0
 
         data_cells.append(
@@ -372,20 +391,12 @@ def _build_tree(
             entry["children"] = _build_tree(
                 data["children_rows"], hierarchy, level + 1
             )
-            # Aggregate leaf_data from all descendants for collapsed chart
-            entry["leaf_data"] = _collect_leaf_data(entry["children"])
+            # Aggregate leaf_data from direct children (already computed bottom-up)
+            agg: list[dict] = []
+            for child_node in entry["children"].values():
+                agg.extend(child_node.get("leaf_data", []))
+            entry["leaf_data"] = agg
         result[group_val] = entry
-    return result
-
-
-def _collect_leaf_data(children: dict) -> list[dict]:
-    """Recursively collect all leaf_data from a tree for aggregation."""
-    result = []
-    for _val, node in children.items():
-        if "leaf_data" in node:
-            result.extend(node["leaf_data"])
-        if "children" in node:
-            result.extend(_collect_leaf_data(node["children"]))
     return result
 
 
@@ -453,9 +464,11 @@ def _render_tree(
             style={"color": "#6c757d", "fontSize": "13px"},
         )
 
-        # Build aggregated chart for collapsed state
+        is_open = (group_path in expand_state) if expand_state else False
+
+        # Only generate aggregated chart for collapsed groups
         agg_chart_div = html.Div(className="agg-chart")
-        if render_agg_fn and "leaf_data" in data and data["leaf_data"]:
+        if render_agg_fn and not is_open and "leaf_data" in data and data["leaf_data"]:
             agg_chart_div = html.Div(
                 render_agg_fn(data["leaf_data"], dim, group_val),
                 className="agg-chart",
@@ -472,8 +485,6 @@ def _render_tree(
                 "userSelect": "none",
             },
         )
-
-        is_open = (group_path in expand_state) if expand_state else False
 
         if is_leaf:
             leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val)

@@ -36,6 +36,8 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
             dcc.Store(id="pivot-selection-store", data=[]),
             dcc.Store(id="pivot-expand-store", data=[]),
             dcc.Store(id="group-header-filter-store", data=None),
+            dcc.Store(id="modifier-key-store", data={"shift": False, "ctrl": False}),
+            dcc.Store(id="pivot-selection-anchor-store", data=None),
             # Header
             dbc.Navbar(
                 dbc.Container(

@@ -561,6 +561,29 @@ class TestRenderCategoryHtmlTable:
         cell = data_row.children[1]
         assert cell.n_clicks == 0
 
+    def test_selected_cell_has_dark_border(self):
+        cells = {"a": {"upper": 1, "lower": 0}, "b": {"upper": 2, "lower": 1}}
+        selected = {("a", "__flat__")}
+        table = _render_category_html_table(
+            cells, "portfolio", ["a", "b"], selected_cells=selected,
+        )
+        data_row = table.children[1].children
+        # Cell "a" should have dark border (selected)
+        cell_a = data_row.children[1]
+        assert "2px solid #333" in cell_a.style["border"]
+        # Cell "b" should have normal border (not selected)
+        cell_b = data_row.children[2]
+        assert "1px solid #dee2e6" in cell_b.style["border"]
+
+    def test_no_selection_normal_borders(self):
+        cells = {"a": {"upper": 1, "lower": 0}}
+        table = _render_category_html_table(
+            cells, "portfolio", ["a"], selected_cells=None,
+        )
+        data_row = table.children[1].children
+        cell = data_row.children[1]
+        assert "1px solid #dee2e6" in cell.style["border"]
+
 
 class TestBuildCategoryTable:
     """Tests for build_category_table()."""

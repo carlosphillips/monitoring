@@ -37,3 +37,16 @@ document.addEventListener('click', function(e) {
         e.stopPropagation();
     }
 }, true);  // capture phase
+
+// Capture modifier key state on any click inside the pivot area.
+// Dash click callbacks don't report event.shiftKey / event.ctrlKey,
+// so we write the state to a dcc.Store that Python callbacks read.
+document.addEventListener('click', function(e) {
+    var store = document.getElementById('modifier-key-store');
+    if (store) {
+        store._dashprivate_setProps({data: {
+            shift: e.shiftKey,
+            ctrl: e.ctrlKey || e.metaKey
+        }});
+    }
+}, true);  // capture phase — fires before Dash callbacks

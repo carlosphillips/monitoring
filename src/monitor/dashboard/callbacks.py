@@ -135,6 +135,25 @@ def _build_full_where(
     return where_sql, params
 
 
+def _build_selected_cells_set(
+    selections: list[dict] | None,
+) -> set[tuple[str, str]] | None:
+    """Build a set of (col_value, group_key) tuples from category selections.
+
+    Returns None if no category selections exist (no highlighting needed).
+    """
+    if not selections:
+        return None
+    result: set[tuple[str, str]] = set()
+    for sel in selections:
+        if sel.get("type") == "category":
+            col_value = sel.get("column_value")
+            group_key = sel.get("group_key")
+            if col_value and group_key:
+                result.add((col_value, group_key))
+    return result if result else None
+
+
 def register_callbacks(app: dash.Dash) -> None:
     """Register all dashboard callbacks on the Dash app."""
 
@@ -445,6 +464,7 @@ def register_callbacks(app: dash.Dash) -> None:
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
         Output("group-header-filter-store", "data", allow_duplicate=True),
+        Output("pivot-selection-anchor-store", "data", allow_duplicate=True),
         *FILTER_INPUTS,
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
@@ -453,12 +473,12 @@ def register_callbacks(app: dash.Dash) -> None:
         prevent_initial_call=True,
     )
     def clear_pivot_selection(*args):
-        """Clear pivot selection and group header filter when filters, hierarchy, or column axis change."""
+        """Clear pivot selection, anchor, and group header filter when filters change."""
         current_selection = args[-2]
         current_group_filter = args[-1]
         if not current_selection and current_group_filter is None:
-            return no_update, no_update
-        return [], None
+            return no_update, no_update, no_update
+        return [], None, None
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
@@ -466,10 +486,13 @@ def register_callbacks(app: dash.Dash) -> None:
         State("pivot-granularity", "value"),
         State("pivot-selection-store", "data"),
         State("column-axis", "value"),
+        State("modifier-key-store", "data"),
         prevent_initial_call=True,
     )
-    def handle_timeline_click(click_data, granularity_override, current_selection, column_axis):
-        """Handle click on a timeline bar segment."""
+    def handle_timeline_click(
+        click_data, granularity_override, current_selection, column_axis, modifiers,
+    ):
+        """Handle click on a timeline bar segment with multi-select support."""
         if not click_data or column_axis != TIME:
             return no_update
 
@@ -478,49 +501,117 @@ def register_callbacks(app: dash.Dash) -> None:
         # Trace 0 = Lower, Trace 1 = Upper
         direction = "lower" if point.get("curveNumber", 0) == 0 else "upper"
 
-        new_selection = {
+        new_sel = {
             "type": "timeline",
             "time_bucket": time_bucket,
             "direction": direction,
         }
 
-        # Click same element again to deselect
-        if current_selection and current_selection == [new_selection]:
+        current_selection = current_selection or []
+        modifiers = modifiers or {}
+        is_ctrl = modifiers.get("ctrl", False)
+
+        if is_ctrl:
+            # Toggle: remove if present, add if absent
+            if new_sel in current_selection:
+                return [s for s in current_selection if s != new_sel]
+            return current_selection + [new_sel]
+
+        # Plain click: toggle off if same single selection, else replace
+        if current_selection == [new_sel]:
             return []
 
-        return [new_selection]
+        return [new_sel]
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
+        Output("pivot-selection-anchor-store", "data", allow_duplicate=True),
         Input({"type": "cat-cell", "col": ALL, "group": ALL}, "n_clicks"),
         State("pivot-selection-store", "data"),
         State("column-axis", "value"),
+        State("modifier-key-store", "data"),
+        State("pivot-selection-anchor-store", "data"),
         prevent_initial_call=True,
     )
-    def handle_category_click(n_clicks_list, current_selection, column_axis):
-        """Handle click on a category table cell."""
+    def handle_category_click(
+        n_clicks_list, current_selection, column_axis, modifiers, anchor,
+    ):
+        """Handle click on a category table cell with multi-select support.
+
+        - Plain click: select only this cell (replaces selection).
+        - Ctrl/Cmd-click: toggle this cell on/off in the selection list.
+        - Shift-click: select contiguous range from anchor to target.
+        - Selecting in a different group clears previous selection.
+        """
         if not any(n_clicks_list):
-            return no_update
+            return no_update, no_update
 
         triggered = ctx.triggered_id
         if not triggered or not isinstance(triggered, dict):
-            return no_update
+            return no_update, no_update
 
         col_value = triggered["col"]
         group_key = triggered["group"]
 
-        new_selection = {
+        new_sel = {
             "type": "category",
             "column_dim": column_axis,
             "column_value": col_value,
             "group_key": group_key,
         }
 
-        # Click same element again to deselect
-        if current_selection and current_selection == [new_selection]:
-            return []
+        current_selection = current_selection or []
+        modifiers = modifiers or {}
+        is_ctrl = modifiers.get("ctrl", False)
+        is_shift = modifiers.get("shift", False)
 
-        return [new_selection]
+        # Different group → always clear and start fresh
+        current_group = None
+        if current_selection:
+            current_group = current_selection[0].get("group_key")
+        if current_group and current_group != group_key:
+            return [new_sel], new_sel
+
+        if is_ctrl:
+            # Toggle: remove if present, add if absent
+            if new_sel in current_selection:
+                result = [s for s in current_selection if s != new_sel]
+                return result, anchor
+            return current_selection + [new_sel], anchor
+
+        if is_shift and anchor and anchor.get("group_key") == group_key:
+            # Range select: select all columns between anchor and target
+            # We need all available columns from the current selection context.
+            # Build range from the triggered callback's ALL pattern.
+            all_ids = ctx.inputs_list[0]  # list of {id: {type, col, group}, ...}
+            group_cols = [
+                item["id"]["col"]
+                for item in all_ids
+                if item["id"]["group"] == group_key
+            ]
+            anchor_col = anchor.get("column_value")
+            if anchor_col in group_cols and col_value in group_cols:
+                idx_a = group_cols.index(anchor_col)
+                idx_b = group_cols.index(col_value)
+                start, end = min(idx_a, idx_b), max(idx_a, idx_b)
+                range_sels = [
+                    {
+                        "type": "category",
+                        "column_dim": column_axis,
+                        "column_value": group_cols[i],
+                        "group_key": group_key,
+                    }
+                    for i in range(start, end + 1)
+                ]
+                return range_sels, anchor
+            # Fallback: just select the clicked cell
+            return [new_sel], new_sel
+
+        # Plain click: toggle off if same single selection, else replace
+        if current_selection == [new_sel]:
+            return [], None
+
+        return [new_sel], new_sel
 
     # --- Expand state callbacks ---
 
@@ -572,6 +663,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("pivot-granularity", "value"),
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
+        Input("pivot-selection-store", "data"),
         State("pivot-expand-store", "data"),
         State("group-header-filter-store", "data"),
     )
@@ -588,6 +680,7 @@ def register_callbacks(app: dash.Dash) -> None:
         granularity_override,
         hierarchy,
         column_axis,
+        pivot_selection,
         expand_state_list,
         group_header_filter,
     ):
@@ -644,18 +737,23 @@ def register_callbacks(app: dash.Dash) -> None:
                 granularity_style,
             )
 
+        # Build selected_cells set for visual highlighting
+        selected_cells = _build_selected_cells_set(pivot_selection)
+
         # Render outside the lock (pure Python, no DB access needed).
         if is_timeline:
             return _render_timeline_pivot(
                 raw, granularity_override, hierarchy,
                 expand_state=expand_state,
                 active_group_filter=active_filter,
+                selected_cells=selected_cells,
             ) + (granularity_style,)
         else:
             return _render_category_pivot(
                 raw, hierarchy, column_axis,
                 expand_state=expand_state,
                 active_group_filter=active_filter,
+                selected_cells=selected_cells,
             ) + (granularity_style,)
 
 
@@ -723,6 +821,7 @@ def _render_timeline_pivot(
     hierarchy: list[str],
     expand_state: set[str] | None = None,
     active_group_filter: str | None = None,
+    selected_cells: set[tuple[str, str]] | None = None,
 ) -> tuple[list, dict]:
     """Render timeline pivot from pre-fetched data (no DB access)."""
     data = raw["data"]
@@ -805,6 +904,7 @@ def _render_category_pivot(
     column_axis: str,
     expand_state: set[str] | None = None,
     active_group_filter: str | None = None,
+    selected_cells: set[tuple[str, str]] | None = None,
 ) -> tuple[list, dict]:
     """Render category pivot from pre-fetched data (no DB access)."""
     data = raw["data"]
@@ -813,6 +913,7 @@ def _render_category_pivot(
         hierarchy=hierarchy if hierarchy else None,
         expand_state=expand_state,
         active_group_filter=active_group_filter,
+        selected_cells=selected_cells,
     )
 
     # Always include a hidden pivot-timeline-chart so the clickData callback

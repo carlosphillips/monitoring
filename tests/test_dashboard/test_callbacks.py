@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from monitor.dashboard.callbacks import _get_available_dimensions, _get_column_axis_options
+from monitor.dashboard.callbacks import (
+    _build_selected_cells_set,
+    _get_available_dimensions,
+    _get_column_axis_options,
+)
 from monitor.dashboard.query_builder import (
     append_where,
     build_selection_where,
@@ -545,6 +549,56 @@ class TestBuildSelectionWhereSecurity:
         assert '"window" = ?' in sql
         assert "structural" in params
         assert "daily" in params
+
+
+class TestBuildSelectedCellsSet:
+    """Tests for _build_selected_cells_set() -- visual highlighting."""
+
+    def test_none_returns_none(self):
+        assert _build_selected_cells_set(None) is None
+
+    def test_empty_list_returns_none(self):
+        assert _build_selected_cells_set([]) is None
+
+    def test_single_category_selection(self):
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_a",
+                "group_key": "__flat__",
+            }
+        ]
+        result = _build_selected_cells_set(selections)
+        assert result == {("portfolio_a", "__flat__")}
+
+    def test_multiple_category_selections(self):
+        selections = [
+            {"type": "category", "column_dim": "portfolio",
+             "column_value": "portfolio_a", "group_key": "layer=structural"},
+            {"type": "category", "column_dim": "portfolio",
+             "column_value": "portfolio_b", "group_key": "layer=structural"},
+        ]
+        result = _build_selected_cells_set(selections)
+        assert result == {
+            ("portfolio_a", "layer=structural"),
+            ("portfolio_b", "layer=structural"),
+        }
+
+    def test_non_category_selections_ignored(self):
+        selections = [
+            {"type": "timeline", "time_bucket": "2024-01-01", "direction": "lower"},
+        ]
+        assert _build_selected_cells_set(selections) is None
+
+    def test_mixed_types_only_categories(self):
+        selections = [
+            {"type": "timeline", "time_bucket": "2024-01-01", "direction": "lower"},
+            {"type": "category", "column_dim": "portfolio",
+             "column_value": "portfolio_a", "group_key": "__flat__"},
+        ]
+        result = _build_selected_cells_set(selections)
+        assert result == {("portfolio_a", "__flat__")}
 
 
 class TestCallbacksIntegration:
