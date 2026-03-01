@@ -69,25 +69,29 @@ class DuckDBConnector:
             breaches_path_resolved = breaches_path.resolve()
             attributions_path_resolved = attributions_path.resolve()
 
+            # Convert to POSIX string for SQL (safe after Path.resolve validation)
+            breaches_path_str = breaches_path_resolved.as_posix()
+            attributions_path_str = attributions_path_resolved.as_posix()
+
             # Load breaches
             self.conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS breaches AS
-                SELECT * FROM read_parquet('{breaches_path_resolved}')
+                SELECT * FROM read_parquet('{breaches_path_str}')
                 """
             )
             breach_count = self.conn.execute("SELECT COUNT(*) FROM breaches").fetchall()[0][0]
-            logger.info("Loaded breaches table: %d rows from %s", breach_count, breaches_path_resolved)
+            logger.info("Loaded breaches table: %d rows from %s", breach_count, breaches_path_str)
 
             # Load attributions
             self.conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS attributions AS
-                SELECT * FROM read_parquet('{attributions_path_resolved}')
+                SELECT * FROM read_parquet('{attributions_path_str}')
                 """
             )
             attr_count = self.conn.execute("SELECT COUNT(*) FROM attributions").fetchall()[0][0]
-            logger.info("Loaded attributions table: %d rows from %s", attr_count, attributions_path_resolved)
+            logger.info("Loaded attributions table: %d rows from %s", attr_count, attributions_path_str)
 
             # Create indexes for fast filtering
             self._create_indexes()

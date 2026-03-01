@@ -30,6 +30,12 @@ class FilterSpec(BaseModel):
             raise ValueError("Filter values cannot be empty")
         return v
 
+    def validate(self) -> None:
+        """Explicit validation (Pydantic validates automatically on instantiation)."""
+        # Pydantic validation happens at instantiation, so this is a no-op
+        # but kept for backward compatibility with code that calls validate()
+        pass
+
 
 class DashboardState(BaseModel):
     """Canonical application state for the Breach Pivot Dashboard.

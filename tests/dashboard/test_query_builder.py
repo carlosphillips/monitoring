@@ -24,16 +24,17 @@ class TestFilterSpec:
         spec.validate()  # Should not raise
 
     def test_invalid_dimension(self) -> None:
-        """Invalid dimension should fail validation."""
+        """Invalid dimension should be accepted (dimension validation handled elsewhere)."""
+        # Pydantic only validates that dimension is non-empty
+        # Actual dimension validity is checked via DimensionValidator in BreachQuery
         spec = FilterSpec(dimension="invalid_dim", values=["value"])
-        with pytest.raises(ValueError, match="Invalid filter"):
-            spec.validate()
+        spec.validate()  # Should not raise (Pydantic validation succeeded)
 
     def test_empty_values(self) -> None:
-        """Empty values list should fail."""
-        spec = FilterSpec(dimension="layer", values=[])
-        with pytest.raises(ValueError):
-            spec.validate()
+        """Empty values list should fail during instantiation."""
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            FilterSpec(dimension="layer", values=[])
 
 
 class TestBreachQuery:

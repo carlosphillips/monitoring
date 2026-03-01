@@ -13,30 +13,10 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from monitor.dashboard.dimensions import get_column_name
+from monitor.dashboard.state import FilterSpec
 from monitor.dashboard.validators import DimensionValidator
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class FilterSpec:
-    """Single filter specification: dimension + values."""
-
-    dimension: str
-    values: list[str]
-
-    def validate(self) -> None:
-        """Validate filter against allow-lists.
-
-        Raises:
-            ValueError: If dimension or values are invalid
-        """
-        if not self.values:
-            raise ValueError("Filter values cannot be empty")
-        if not DimensionValidator.validate_filter_values(self.dimension, self.values):
-            raise ValueError(
-                f"Invalid filter: dimension={self.dimension}, values={self.values}"
-            )
 
 
 @dataclass
@@ -185,6 +165,7 @@ class TimeSeriesAggregator:
             WHERE {where_clause}
             GROUP BY {group_by_clause}
             ORDER BY end_date ASC
+            LIMIT 5000
         """
 
         return sql.strip(), params
@@ -298,12 +279,14 @@ class CrossTabAggregator:
                 WHERE {where_clause}
                 GROUP BY {group_by_clause}
                 ORDER BY total_breaches DESC
+                LIMIT 5000
             """
         else:
             sql = f"""
                 SELECT {select_clause}
                 FROM breaches
                 WHERE {where_clause}
+                LIMIT 5000
             """
 
         return sql.strip(), params

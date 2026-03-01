@@ -1,0 +1,210 @@
+================================================================================
+KIERAN'S CODE REVIEW - BREACH PIVOT DASHBOARD (feat/breach-pivot-dashboard-phase1)
+================================================================================
+
+VERDICT: PASS - Production Ready with 3 Minor Pre-Merge Fixes
+Grade: A- (92/100)
+
+================================================================================
+BLOCKING FIXES (FIX BEFORE MERGE - 25 min total)
+================================================================================
+
+[MEDIUM] Issue #1: FilterSpec Duplication
+  File: src/monitor/dashboard/query_builder.py:21-26
+  Action: DELETE dataclass FilterSpec, import from state.py instead
+  Time: 15 min
+  Impact: Removes duplication, clarifies which validation layer is used
+
+[MEDIUM] Issue #2: Path Interpolation in SQL
+  File: src/monitor/dashboard/db.py:69-73, 79-83
+  Action: Use Path.resolve() before f-string interpolation
+  Time: 5 min
+  Impact: Security best practice
+
+[MINOR] Issue #3: Import Inside Function
+  File: src/monitor/dashboard/callbacks.py:127
+  Action: Move "from datetime import datetime" to top of file
+  Time: 5 min
+  Impact: Code style, performance
+
+================================================================================
+STRENGTHS (Keep As-Is)
+================================================================================
+
+State Management (EXCELLENT)
+  - Single source of truth pattern perfectly implemented
+  - Pydantic validation with comprehensive field validators
+  - Modern Python 3.10+ type hints (str | None)
+  - Clear immutability guarantees
+
+SQL Injection Prevention (EXCELLENT)
+  - Multi-layer defense: allow-lists + parameterized queries + validators
+  - Dimension validation prevents GROUP BY injection
+  - Value validation prevents WHERE clause injection
+  - Additional SQLInjectionValidator as safety net
+
+Query Architecture (SOLID)
+  - TimeSeriesAggregator vs CrossTabAggregator = good separation
+  - Clear method names and docstrings
+  - Parameterized SQL with $placeholder syntax
+
+Test Coverage (GOOD)
+  - 70+ tests across 5 modules
+  - Mix of unit and integration tests
+  - Good validator test coverage
+
+Visualization Module (CLEAN)
+  - Single-responsibility helper functions
+  - Thoughtful empty state handling
+  - Conditional formatting is clear
+
+Documentation (GOOD)
+  - Module docstrings present and informative
+  - Function docstrings include Args/Returns/Raises
+  - Inline comments for complex logic
+
+================================================================================
+RECOMMENDED ENHANCEMENTS (POST-MERGE, ~2 hours)
+================================================================================
+
+Enhancement #1: TypedDict for Callback Returns (20 min)
+  - Better IDE autocomplete
+  - Documents callback return structures
+  File: src/monitor/dashboard/callbacks.py
+
+Enhancement #2: Explicit Type Checking (10 min)
+  - Replace str() conversions with isinstance() checks
+  File: src/monitor/dashboard/validators.py:140, 191-192
+
+Enhancement #3: Better Error Messages (15 min)
+  - Explain WHY a filter is invalid (dimension vs values)
+  File: src/monitor/dashboard/query_builder.py:37-39
+
+Enhancement #4: Date Range Helper Function (10 min)
+  - Extract complex date intersection logic
+  File: src/monitor/dashboard/callbacks.py:257-271
+
+Enhancement #5: Extract Table Building (25 min)
+  - Consolidate duplicate HTML table code
+  File: src/monitor/dashboard/callbacks.py (render_table + handle_drill_down)
+
+Enhancement #6: Use Enum for Constants (20 min)
+  - Type-safe breach directions, layers, factors, windows
+  File: src/monitor/dashboard/validators.py
+
+================================================================================
+STANDARDS COMPLIANCE
+================================================================================
+
+Type Hints:                  8/10  (Good modern syntax, dicts could be TypedDict)
+PEP 8 Compliance:           9/10  (Clean imports, reasonable line lengths)
+Pythonic Patterns:          9/10  (Good use of dataclasses, Pydantic, no getters)
+Error Handling:             8/10  (Specific exceptions, logging at right levels)
+Module Organization:        9/10  (Clear separation, minor FilterSpec duplication)
+SQL Injection Security:      9/10  (Excellent parameterization and validation)
+Code Clarity:               9/10  (Clear naming, good separation of concerns)
+
+================================================================================
+SECURITY ASSESSMENT
+================================================================================
+
+SQL Injection:              9/10  (Parameterized queries + allow-lists)
+Data Validation:            9/10  (Pydantic + DimensionValidator)
+Access Control:             N/A   (Dashboard doesn't implement auth)
+
+Notes:
+  ✓ All queries use parameterized SQL with $placeholders
+  ✓ Dimension allow-lists prevent GROUP BY injection
+  ✓ Value validators prevent WHERE clause injection
+  ✓ Pydantic state management ensures type safety
+  ✓ One path interpolation issue identified (minor)
+
+================================================================================
+PERFORMANCE NOTES
+================================================================================
+
+Good:
+  ✓ LRU cache with 128-entry limit (typical workflows)
+  ✓ Decimation prevents browser crashes on large datasets
+  ✓ Indexes on frequently-filtered columns (portfolio, date, layer)
+  ✓ Filter pushdown in SQL (WHERE before GROUP BY)
+
+Could Improve:
+  ✗ No query timeout (could hang on pathological queries)
+  ✗ Hard-coded 1000-row limit in drill-down
+  ✗ Cache has infinite TTL (might miss data refreshes)
+
+Recommendation: Add query timeout parameter (DuckDB supports this).
+
+================================================================================
+TEST COVERAGE ANALYSIS
+================================================================================
+
+Files:             5 test modules
+Tests:             70+ total tests
+Quality:           Good mix of unit and integration
+Organization:      Clean - tests organized by module
+
+Covered Well:
+  ✓ Visualization builders (decimation, color intensity, timelines, tables)
+  ✓ Dimension validators (all allow-list checks)
+  ✓ Query building (filter specs, aggregations)
+  ✓ State management (serialization, validation)
+
+Missing:
+  ✗ Callback error paths (exception handling in callbacks)
+  ✗ Cache hit/miss scenarios
+  ✗ E2E tests (requires Dash test client)
+
+Recommendation: Add parameterized tests for filter combinations.
+
+================================================================================
+CODE PATTERNS USED WELL
+================================================================================
+
+✓ Single Source of Truth: compute_app_state() → fetch_breach_data() → render()
+✓ Parameterized SQL: All queries use $placeholder syntax
+✓ Validation at Entry: DashboardState + DimensionValidator guards all operations
+✓ Pydantic Models: State is immutable and validated
+✓ LRU Caching: Query results cached with sensible key structure
+✓ Separation of Concerns: state | validation | query | db | viz | callbacks
+✓ Context Managers: DB connections properly managed
+✓ Type Hints: Modern Python 3.10+ union types (str | None)
+
+✗ Duplication: FilterSpec defined in two places (easy fix)
+✗ String Conversion: Some functions use str() on potentially non-string inputs
+
+================================================================================
+MERGE CHECKLIST
+================================================================================
+
+Before merging:
+  [ ] Apply 3 blocking fixes (30 min)
+  [ ] Run full test suite: pytest tests/dashboard/
+  [ ] Manual smoke test: Start app, try several filter combinations
+  [ ] Verify SQL injection validators still work
+  [ ] Check for any regressions in existing features
+
+Time estimate: 1 hour total (including fixes + testing)
+
+================================================================================
+FINAL NOTES
+================================================================================
+
+This is professional-grade Python code that reflects:
+  ✓ Strong architectural thinking
+  ✓ Security-first development mindset
+  ✓ Good testing discipline
+  ✓ Modern Python practices
+  ✓ Attention to maintainability
+
+The identified issues are refinements, not blockers. All are straightforward
+to fix. Code is ready for production with minor pre-merge cleanup.
+
+Kieran's Verdict: APPROVE with fixes (30 min) before merge.
+
+================================================================================
+Full details in:
+  - KIERAN_CODE_REVIEW.md (comprehensive analysis)
+  - KIERAN_REVIEW_ACTIONABLE.md (specific line-by-line fixes)
+================================================================================

@@ -69,6 +69,7 @@ def create_app(
         __name__,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
         suppress_callback_exceptions=True,
+        debug=debug,
     )
 
     # Set app metadata
