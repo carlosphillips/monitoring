@@ -65,25 +65,29 @@ class DuckDBConnector:
             raise FileNotFoundError(f"Attributions parquet not found: {attributions_path}")
 
         try:
+            # Resolve paths to absolute paths (eliminates directory traversal risk)
+            breaches_path_resolved = breaches_path.resolve()
+            attributions_path_resolved = attributions_path.resolve()
+
             # Load breaches
             self.conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS breaches AS
-                SELECT * FROM read_parquet('{breaches_path}')
+                SELECT * FROM read_parquet('{breaches_path_resolved}')
                 """
             )
             breach_count = self.conn.execute("SELECT COUNT(*) FROM breaches").fetchall()[0][0]
-            logger.info("Loaded breaches table: %d rows from %s", breach_count, breaches_path)
+            logger.info("Loaded breaches table: %d rows from %s", breach_count, breaches_path_resolved)
 
             # Load attributions
             self.conn.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS attributions AS
-                SELECT * FROM read_parquet('{attributions_path}')
+                SELECT * FROM read_parquet('{attributions_path_resolved}')
                 """
             )
             attr_count = self.conn.execute("SELECT COUNT(*) FROM attributions").fetchall()[0][0]
-            logger.info("Loaded attributions table: %d rows from %s", attr_count, attributions_path)
+            logger.info("Loaded attributions table: %d rows from %s", attr_count, attributions_path_resolved)
 
             # Create indexes for fast filtering
             self._create_indexes()
