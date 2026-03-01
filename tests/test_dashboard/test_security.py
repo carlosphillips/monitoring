@@ -394,9 +394,9 @@ class TestMaxRowLimits:
             assert data_rows <= EXPORT_MAX_ROWS
 
     def test_query_detail_respects_limit(self, sample_output):
-        """Test that detail query respects row limit."""
+        """Test that query respects row limit."""
         from monitor.dashboard.analytics_context import DETAIL_TABLE_MAX_ROWS
 
         with AnalyticsContext(sample_output) as ctx:
-            rows = ctx.query_detail(limit=DETAIL_TABLE_MAX_ROWS * 100)
+            rows = ctx.query_breaches(limit=DETAIL_TABLE_MAX_ROWS * 100)
             assert len(rows) <= DETAIL_TABLE_MAX_ROWS

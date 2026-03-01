@@ -383,7 +383,8 @@ def query(
 
     sql = f"SELECT * FROM breaches {where_sql} ORDER BY end_date DESC, portfolio, layer, factor"
     if limit is not None:
-        sql += f" LIMIT {limit}"
+        sql += " LIMIT ?"
+        params.append(limit)
 
     result = conn.execute(sql, params)
     columns = [desc[0] for desc in result.description]
@@ -786,3 +787,35 @@ def ops_stats(output_dir: Path) -> None:
         stats = ops.get_summary_stats()
 
     click.echo(json.dumps(stats, indent=2))
+
+
+@dashboard_ops.command("date-range")
+@click.option(
+    "--output", "output_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default="./output",
+    help="Output directory containing breach data",
+)
+def ops_date_range(output_dir: Path) -> None:
+    """Get min and max dates from the dataset (agent-native)."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
+
+    try:
+        from monitor.dashboard.operations import DashboardOperations
+    except ImportError:
+        click.echo(
+            "Dashboard dependencies not installed. Run: pip install monitoring[dashboard]",
+            err=True,
+        )
+        sys.exit(1)
+
+    import json
+
+    with DashboardOperations(output_dir) as ops:
+        min_date, max_date = ops.get_date_range()
+
+    click.echo(json.dumps({"min_date": min_date, "max_date": max_date}, indent=2))

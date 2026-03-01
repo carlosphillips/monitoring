@@ -69,8 +69,19 @@ def load_breaches(output_dir: str | Path) -> duckdb.DuckDBPyConnection:
 
     conn = duckdb.connect(":memory:")
 
+    # Validate parquet file path to prevent path traversal attacks
+    output_dir_resolved = Path(output_dir).resolve()
+    parquet_file_resolved = parquet_file.resolve()
+    try:
+        parquet_file_resolved.relative_to(output_dir_resolved)
+    except ValueError:
+        raise ValueError(
+            f"Path traversal detected: {parquet_file_resolved} is not under {output_dir_resolved}"
+        )
+
     # Create breaches table with computed columns directly from parquet
-    safe_path = str(parquet_file).replace("'", "''")
+    # Use str() on resolved path and escape quotes for additional safety
+    safe_path = str(parquet_file_resolved).replace("'", "''")
     conn.execute(f"""
         CREATE TABLE breaches AS
         SELECT

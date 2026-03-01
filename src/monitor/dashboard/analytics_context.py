@@ -47,6 +47,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import math
 import re
 import threading
 from datetime import datetime
@@ -69,9 +70,6 @@ from monitor.dashboard.query_builder import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Thread-safe access to DuckDB connection
-_db_lock = threading.Lock()
 
 # Row limits for safety
 DETAIL_TABLE_MAX_ROWS = 1000
@@ -121,6 +119,9 @@ class AnalyticsContext:
             FileNotFoundError: If output_dir or parquet file not found
         """
         self.output_dir = Path(output_dir)
+        # Instance-level lock for thread-safe access to this connection
+        self._lock = threading.Lock()
+
         if not self.output_dir.is_dir():
             raise FileNotFoundError(f"Output directory not found: {self.output_dir}")
 
@@ -132,7 +133,7 @@ class AnalyticsContext:
             )
 
         # Create in-memory DuckDB connection with precomputed columns
-        with _db_lock:
+        with self._lock:
             self._conn = duckdb.connect(":memory:")
             self._load_breaches()
 
@@ -240,7 +241,7 @@ class AnalyticsContext:
             if limit < 0:
                 raise ValueError(f"Invalid limit (must be >= 0): {limit}")
 
-        # Security: Sanitize input lists
+        # Security: Standardize input lists (convert None to empty list)
         portfolios = self._sanitize_string_list(portfolios)
         layers = self._sanitize_string_list(layers)
         factors = self._sanitize_string_list(factors)
@@ -248,11 +249,11 @@ class AnalyticsContext:
         directions = self._sanitize_string_list(directions)
 
         where_sql, params = build_where_clause(
-            portfolios or None,
-            layers or None,
-            factors or None,
-            windows or None,
-            directions or None,
+            portfolios if portfolios else None,
+            layers if layers else None,
+            factors if factors else None,
+            windows if windows else None,
+            directions if directions else None,
             start_date,
             end_date,
             abs_value_range,
@@ -268,7 +269,7 @@ class AnalyticsContext:
         """
         params.append(limit)
 
-        with _db_lock:
+        with self._lock:
             result = self._conn.execute(sql, params)
             return self._fetchall_dicts(result)
 
@@ -328,45 +329,9 @@ class AnalyticsContext:
             ORDER BY breach_count DESC
         """
 
-        with _db_lock:
+        with self._lock:
             result = self._conn.execute(sql, params)
             return self._fetchall_dicts(result)
-
-    def query_detail(
-        self,
-        portfolios: list[str] | None = None,
-        layers: list[str] | None = None,
-        factors: list[str] | None = None,
-        windows: list[str] | None = None,
-        directions: list[str] | None = None,
-        start_date: str | None = None,
-        end_date: str | None = None,
-        abs_value_range: list[float] | None = None,
-        distance_range: list[float] | None = None,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Query detail breach records with all columns for drill-down.
-
-        Returns:
-            List of complete breach row dicts
-
-        Args:
-            See query_breaches() for filter argument documentation
-            limit: Max rows (capped at DETAIL_TABLE_MAX_ROWS)
-        """
-        # Alias to query_breaches for consistent behavior
-        return self.query_breaches(
-            portfolios=portfolios,
-            layers=layers,
-            factors=factors,
-            windows=windows,
-            directions=directions,
-            start_date=start_date,
-            end_date=end_date,
-            abs_value_range=abs_value_range,
-            distance_range=distance_range,
-            limit=limit,
-        )
 
     def export_csv(
         self,
@@ -407,7 +372,7 @@ class AnalyticsContext:
         """
         params.append(limit)
 
-        with _db_lock:
+        with self._lock:
             result = self._conn.execute(sql, params)
             columns = [desc[0] for desc in result.description]
             rows = result.fetchall()
@@ -416,7 +381,9 @@ class AnalyticsContext:
         writer = csv.writer(buf)
         writer.writerow(columns)
         for row in rows:
-            writer.writerow(row)
+            # Sanitize all values to handle special float values (Inf, NaN)
+            sanitized_row = [self._sanitize_csv_value(v) for v in row]
+            writer.writerow(sanitized_row)
 
         return buf.getvalue()
 
@@ -428,7 +395,7 @@ class AnalyticsContext:
         """
         options: dict[str, list[str]] = {}
 
-        with _db_lock:
+        with self._lock:
             # Get distinct values for standard dimensions
             for dim in ["portfolio", "layer", "window", "direction"]:
                 rows = self._conn.execute(
@@ -451,9 +418,96 @@ class AnalyticsContext:
 
         return options
 
+    def get_total_breaches(self) -> int:
+        """Get total number of breach records in the dataset.
+
+        Returns:
+            Total count of breach records
+
+            Example:
+                ```python
+                total = context.get_total_breaches()  # Returns: 11296
+                ```
+        """
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
+
+    def get_portfolios(self) -> list[str]:
+        """Get list of all portfolios in the dataset.
+
+        Returns:
+            Sorted list of unique portfolio names
+
+            Example:
+                ```python
+                portfolios = context.get_portfolios()
+                # Returns: ['alpha', 'beta', 'gamma']
+                ```
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT portfolio FROM breaches ORDER BY portfolio"
+            ).fetchall()
+            return [str(r[0]) for r in rows]
+
+    def get_summary_stats(self) -> dict[str, Any]:
+        """Get comprehensive summary statistics about the breach dataset.
+
+        Returns:
+            Dict with total_breaches, portfolios, date_range, and dimension counts
+
+            Example:
+                ```python
+                stats = context.get_summary_stats()
+                # Returns: {
+                #     "total_breaches": 11296,
+                #     "portfolios": ["alpha", "beta"],
+                #     "date_range": ("2024-01-02", "2024-12-31"),
+                #     "dimensions": {
+                #         "portfolio": 2,
+                #         "layer": 4,
+                #         "factor": 5,
+                #         "window": 5,
+                #         "direction": 2
+                #     }
+                # }
+                ```
+        """
+        with self._lock:
+            # Get total breaches
+            total_breaches = self._conn.execute("SELECT COUNT(*) FROM breaches").fetchone()[0]
+
+            # Get portfolios
+            portfolios = [
+                r[0] for r in self._conn.execute(
+                    "SELECT DISTINCT portfolio FROM breaches ORDER BY portfolio"
+                ).fetchall()
+            ]
+
+            # Get date range
+            date_result = self._conn.execute(
+                "SELECT MIN(end_date), MAX(end_date) FROM breaches"
+            ).fetchone()
+            date_range = (str(date_result[0]), str(date_result[1])) if date_result[0] else (None, None)
+
+            # Get dimension counts
+            dimensions = {}
+            for dim in ["portfolio", "layer", "factor", "window", "direction"]:
+                count = self._conn.execute(
+                    f'SELECT COUNT(DISTINCT "{dim}") FROM breaches'
+                ).fetchone()[0]
+                dimensions[dim] = count
+
+            return {
+                "total_breaches": int(total_breaches),
+                "portfolios": portfolios,
+                "date_range": date_range,
+                "dimensions": dimensions,
+            }
+
     def close(self) -> None:
         """Close the DuckDB connection and release resources."""
-        with _db_lock:
+        with self._lock:
             if hasattr(self, "_conn") and self._conn is not None:
                 self._conn.close()
                 logger.debug("AnalyticsContext connection closed")
@@ -513,3 +567,22 @@ class AnalyticsContext:
             return []
         # Ensure all values are strings
         return [str(v) for v in values if v is not None]
+
+    @staticmethod
+    def _sanitize_csv_value(value: Any) -> str:
+        """Sanitize a value for CSV export, handling special float values.
+
+        Args:
+            value: Value to sanitize (any type)
+
+        Returns:
+            String representation safe for CSV export
+        """
+        if value is None:
+            return ""
+        if isinstance(value, float):
+            if math.isnan(value):
+                return "NaN"
+            if math.isinf(value):
+                return "Inf" if value > 0 else "-Inf"
+        return str(value)

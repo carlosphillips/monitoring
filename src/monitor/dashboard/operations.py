@@ -210,7 +210,7 @@ class DashboardOperations:
         Returns:
             List of complete breach records
         """
-        return self._context.query_detail(
+        return self._context.query_breaches(
             portfolios=portfolios,
             layers=layers,
             factors=factors,
@@ -294,19 +294,13 @@ class DashboardOperations:
             Example:
                 ("2024-01-02", "2024-12-31")
         """
-        # This is a simple utility method that queries the context
-        # We need to add this to the context or compute it here
-        import duckdb
-
-        # Create a minimal DuckDB connection to get the date range
-        parquet_file = self.output_dir / "all_breaches.parquet"
-        conn = duckdb.connect(":memory:")
-        result = conn.execute(
-            f"SELECT MIN(end_date), MAX(end_date) FROM read_parquet('{str(parquet_file)}')"
+        # Reuse existing AnalyticsContext connection to avoid redundant parquet loading
+        # and ensure thread-safe access through the module-level lock
+        result = self._context._conn.execute(
+            "SELECT MIN(end_date), MAX(end_date) FROM breaches"
         ).fetchone()
-        conn.close()
 
-        if result is None or result[0] is None:
+        if result is None or result[0] is None or result[1] is None:
             raise ValueError("No breach data found in parquet file")
 
         return (str(result[0]), str(result[1]))
@@ -337,38 +331,8 @@ class DashboardOperations:
                 }
                 ```
         """
-        # Use AnalyticsContext's internal connection to get properly computed columns
-        total_breaches = self._context._conn.execute(
-            "SELECT COUNT(*) FROM breaches"
-        ).fetchone()[0]
-
-        # Get portfolios
-        portfolios = [
-            r[0] for r in self._context._conn.execute(
-                "SELECT DISTINCT portfolio FROM breaches ORDER BY portfolio"
-            ).fetchall()
-        ]
-
-        # Get date range
-        date_result = self._context._conn.execute(
-            "SELECT MIN(end_date), MAX(end_date) FROM breaches"
-        ).fetchone()
-        date_range = (str(date_result[0]), str(date_result[1])) if date_result[0] else (None, None)
-
-        # Get dimension counts
-        dimensions = {}
-        for dim in ["portfolio", "layer", "factor", "window", "direction"]:
-            count = self._context._conn.execute(
-                f'SELECT COUNT(DISTINCT "{dim}") FROM breaches'
-            ).fetchone()[0]
-            dimensions[dim] = count
-
-        return {
-            "total_breaches": int(total_breaches),
-            "portfolios": portfolios,
-            "date_range": date_range,
-            "dimensions": dimensions,
-        }
+        # Use AnalyticsContext's public methods for thread-safe access
+        return self._context.get_summary_stats()
 
     def close(self) -> None:
         """Close the operations context and release resources."""

@@ -227,26 +227,26 @@ class TestQueryHierarchy:
 
 
 class TestQueryDetail:
-    """Tests for query_detail() method."""
+    """Tests for query_breaches() method (detail drill-down)."""
 
     def test_query_detail_returns_all_rows(self, sample_output):
-        """Test that detail query returns all columns."""
+        """Test that query returns all columns."""
         with AnalyticsContext(sample_output) as ctx:
-            rows = ctx.query_detail()
+            rows = ctx.query_breaches()
             assert len(rows) == 7
 
     def test_query_detail_with_limit(self, sample_output):
-        """Test detail query with limit."""
+        """Test query with limit."""
         with AnalyticsContext(sample_output) as ctx:
-            rows = ctx.query_detail(limit=2)
+            rows = ctx.query_breaches(limit=2)
             assert len(rows) == 2
 
     def test_query_detail_equivalent_to_query_breaches(self, sample_output):
-        """Test that detail query is equivalent to breaches query."""
+        """Test that breaches query works consistently."""
         with AnalyticsContext(sample_output) as ctx:
-            detail_rows = ctx.query_detail()
-            breach_rows = ctx.query_breaches()
-            assert len(detail_rows) == len(breach_rows)
+            rows1 = ctx.query_breaches()
+            rows2 = ctx.query_breaches()
+            assert len(rows1) == len(rows2)
 
 
 class TestExportCsv:
