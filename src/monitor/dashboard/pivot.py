@@ -112,6 +112,8 @@ def build_category_table(
     category_data: list[dict],
     column_dim: str,
     hierarchy: list[str] | None = None,
+    expand_state: set[str] | None = None,
+    active_group_filter: str | None = None,
 ) -> list:
     """Build a category mode pivot table with split-color cells.
 
@@ -120,6 +122,8 @@ def build_category_table(
             column_dim, direction, and count.
         column_dim: The dimension used for column grouping.
         hierarchy: Optional list of row hierarchy dimensions.
+        expand_state: Set of group paths that should be open.
+        active_group_filter: Currently active group header filter path.
 
     Returns:
         List of Dash HTML components.
@@ -138,7 +142,19 @@ def build_category_table(
             group_key = f"{dim}={group_val}"
             return _render_category_html_table(cells, column_dim, col_values, group_key)
 
-        return _render_tree(tree, hierarchy, _category_leaf, level=0)
+        def _category_agg(leaf_data, dim, group_val):
+            """Render aggregated category cells for collapsed groups."""
+            cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
+            return _render_category_html_table(
+                cells, column_dim, col_values, static=True,
+            )
+
+        return _render_tree(
+            tree, hierarchy, _category_leaf, level=0,
+            expand_state=expand_state,
+            render_agg_fn=_category_agg,
+            active_group_filter=active_group_filter,
+        )
 
     # Flat (no hierarchy): single category table
     col_values = sorted(
@@ -169,6 +185,7 @@ def _render_category_html_table(
     column_dim: str,
     col_values: list[str],
     group_key: str | None = None,
+    static: bool = False,
 ) -> html.Table:
     """Render a single category table with split-color cells.
 
@@ -230,19 +247,23 @@ def _render_category_html_table(
         total = upper + lower
         intensity = min(total / max_count, 1.0) if max_count > 0 else 0
 
-        cell_id = {"type": "cat-cell", "col": cv, "group": group_key or "__flat__"}
+        td_kwargs = {
+            "style": {
+                "textAlign": "center",
+                "padding": "0",
+                "cursor": "default" if static else "pointer",
+                "border": "1px solid #dee2e6",
+                "minWidth": "80px",
+            },
+        }
+        if not static:
+            td_kwargs["id"] = {"type": "cat-cell", "col": cv, "group": group_key or "__flat__"}
+            td_kwargs["n_clicks"] = 0
+
         data_cells.append(
             html.Td(
                 _build_split_cell(upper, lower, intensity),
-                id=cell_id,
-                n_clicks=0,
-                style={
-                    "textAlign": "center",
-                    "padding": "0",
-                    "cursor": "pointer",
-                    "border": "1px solid #dee2e6",
-                    "minWidth": "80px",
-                },
+                **td_kwargs,
             )
         )
 
@@ -351,7 +372,20 @@ def _build_tree(
             entry["children"] = _build_tree(
                 data["children_rows"], hierarchy, level + 1
             )
+            # Aggregate leaf_data from all descendants for collapsed chart
+            entry["leaf_data"] = _collect_leaf_data(entry["children"])
         result[group_val] = entry
+    return result
+
+
+def _collect_leaf_data(children: dict) -> list[dict]:
+    """Recursively collect all leaf_data from a tree for aggregation."""
+    result = []
+    for _val, node in children.items():
+        if "leaf_data" in node:
+            result.extend(node["leaf_data"])
+        if "children" in node:
+            result.extend(_collect_leaf_data(node["children"]))
     return result
 
 
@@ -360,6 +394,10 @@ def _render_tree(
     hierarchy: list[str],
     render_leaf_fn: Callable[[list[dict], str, str], Any],
     level: int,
+    expand_state: set[str] | None = None,
+    parent_path: str = "",
+    render_agg_fn: Callable[[list[dict], str, str], Any] | None = None,
+    active_group_filter: str | None = None,
 ) -> list:
     """Render a tree as nested html.Details components with expand/collapse.
 
@@ -371,6 +409,11 @@ def _render_tree(
         render_leaf_fn: Callable(leaf_data, dim, group_val) -> Dash component
             to render the leaf content.
         level: Current depth in the hierarchy (0-based).
+        expand_state: Set of group paths that should be open.
+        parent_path: Path prefix from parent groups.
+        render_agg_fn: Optional callable to render aggregated chart for
+            collapsed groups. Same signature as render_leaf_fn.
+        active_group_filter: Currently active group header filter path.
 
     Returns:
         List of html.Details components.
@@ -390,15 +433,36 @@ def _render_tree(
     for group_val, data in sorted_items:
         display_val = _format_group_value(dim, group_val)
         count = data["count"]
+        group_path = f"{parent_path}|{dim}={group_val}".lstrip("|")
+
+        # Clickable label with pattern-match ID
+        label_style = {"fontWeight": "bold", "cursor": "pointer"}
+        if active_group_filter and group_path == active_group_filter:
+            label_style["backgroundColor"] = "rgba(13,110,253,0.12)"
+
+        label_span = html.Span(
+            f"{dim_label}: {display_val}",
+            id={"type": "group-header", "path": group_path},
+            n_clicks=0,
+            className="group-header-label",
+            style=label_style,
+        )
+
+        count_span = html.Span(
+            f" ({count} breach{'es' if count != 1 else ''})",
+            style={"color": "#6c757d", "fontSize": "13px"},
+        )
+
+        # Build aggregated chart for collapsed state
+        agg_chart_div = html.Div(className="agg-chart")
+        if render_agg_fn and "leaf_data" in data and data["leaf_data"]:
+            agg_chart_div = html.Div(
+                render_agg_fn(data["leaf_data"], dim, group_val),
+                className="agg-chart",
+            )
 
         summary = html.Summary(
-            [
-                html.Span(f"{dim_label}: {display_val}", style={"fontWeight": "bold"}),
-                html.Span(
-                    f" ({count} breach{'es' if count != 1 else ''})",
-                    style={"color": "#6c757d", "fontSize": "13px"},
-                ),
-            ],
+            [label_span, count_span, agg_chart_div],
             style={
                 "cursor": "pointer",
                 "padding": "6px 10px",
@@ -409,6 +473,8 @@ def _render_tree(
             },
         )
 
+        is_open = (group_path in expand_state) if expand_state else False
+
         if is_leaf:
             leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val)
             children = [
@@ -417,14 +483,22 @@ def _render_tree(
             ]
         else:
             sub = _render_tree(
-                data["children"], hierarchy, render_leaf_fn, level + 1
+                data["children"], hierarchy, render_leaf_fn, level + 1,
+                expand_state=expand_state, parent_path=group_path,
+                render_agg_fn=render_agg_fn,
+                active_group_filter=active_group_filter,
             )
             children = [
                 summary,
                 html.Div(sub, style={"paddingLeft": "20px"}),
             ]
 
-        components.append(html.Details(children, open=False, style={"marginBottom": "4px"}))
+        components.append(html.Details(
+            children,
+            open=is_open,
+            id={"type": "group-details", "path": group_path},
+            style={"marginBottom": "4px"},
+        ))
 
     if truncated:
         components.append(
@@ -454,6 +528,8 @@ def build_hierarchical_pivot(
     grouped_data: list[dict],
     hierarchy: list[str],
     granularity: str,
+    expand_state: set[str] | None = None,
+    active_group_filter: str | None = None,
 ) -> list:
     """Build hierarchical pivot components with expand/collapse.
 
@@ -462,6 +538,8 @@ def build_hierarchical_pivot(
             dimension columns plus time_bucket, direction, count.
         hierarchy: List of dimension names for grouping, e.g. ["portfolio", "layer"].
         granularity: Time granularity label for chart axis.
+        expand_state: Set of group paths that should be open.
+        active_group_filter: Currently active group header filter path.
 
     Returns:
         List of Dash HTML components (html.Details/html.Summary sections).
@@ -488,5 +566,28 @@ def build_hierarchical_pivot(
             style={"height": "250px"},
         )
 
+    def _timeline_agg(leaf_data, dim, group_val):
+        """Render aggregated timeline chart for collapsed groups."""
+        # Sum counts per (time_bucket, direction) across the group
+        agg: dict[tuple[str, str], int] = {}
+        for row in leaf_data:
+            key = (str(row["time_bucket"]), row["direction"])
+            agg[key] = agg.get(key, 0) + int(row["count"])
+        bucket_data = [
+            {"time_bucket": k[0], "direction": k[1], "count": v}
+            for k, v in agg.items()
+        ]
+        fig = build_timeline_figure(bucket_data, granularity)
+        return dcc.Graph(
+            figure=fig,
+            config={"displayModeBar": False, "staticPlot": True},
+            style={"height": "120px"},
+        )
+
     # Render the tree as nested Details/Summary components
-    return _render_tree(tree, hierarchy, _timeline_leaf, level=0)
+    return _render_tree(
+        tree, hierarchy, _timeline_leaf, level=0,
+        expand_state=expand_state,
+        render_agg_fn=_timeline_agg,
+        active_group_filter=active_group_filter,
+    )

@@ -1,0 +1,9 @@
+/* Hide aggregated chart when group is expanded */
+details[open] > summary .agg-chart {
+    display: none;
+}
+
+/* Clickable group header hover */
+.group-header-label:hover {
+    text-decoration: underline;
+}

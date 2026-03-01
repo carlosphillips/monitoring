@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import threading
+from datetime import datetime
 
 import dash
 import duckdb
-from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
+from dash import ALL, ClientsideFunction, Input, Output, State, ctx, dcc, html, no_update
 from flask import current_app
 
 from monitor.dashboard.constants import (
@@ -145,7 +147,8 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("detail-empty-message", "style"),
         Output("detail-table", "style_table"),
         *FILTER_INPUTS,
-        State("pivot-selection-store", "data"),
+        Input("pivot-selection-store", "data"),
+        Input("group-header-filter-store", "data"),
         State("pivot-granularity", "value"),
         State("column-axis", "value"),
     )
@@ -160,6 +163,7 @@ def register_callbacks(app: dash.Dash) -> None:
         abs_value_range,
         distance_range,
         pivot_selection,
+        group_header_filter,
         granularity_override,
         column_axis,
     ):
@@ -193,6 +197,17 @@ def register_callbacks(app: dash.Dash) -> None:
                 where_sql = "WHERE " + selection_sql
             params.extend(selection_params)
 
+        # Add group header filter
+        group_filter_sql, group_filter_params = build_selection_where(
+            group_header_filter, None, None,
+        )
+        if group_filter_sql:
+            if where_sql:
+                where_sql += " AND " + group_filter_sql
+            else:
+                where_sql = "WHERE " + group_filter_sql
+            params.extend(group_filter_params)
+
         query = f"""
             SELECT
                 end_date, portfolio, layer,
@@ -225,6 +240,119 @@ def register_callbacks(app: dash.Dash) -> None:
         if count == 0:
             return [], count_text, {"display": "block"}, {"display": "none"}
         return records, count_text, {"display": "none"}, {"overflowX": "auto"}
+
+    # --- CSV Export callback ---
+
+    @app.callback(
+        Output("export-csv-download", "data"),
+        Input("export-csv-btn", "n_clicks"),
+        *[State(i.component_id, i.component_property) for i in FILTER_INPUTS],
+        State("pivot-selection-store", "data"),
+        State("group-header-filter-store", "data"),
+        State("pivot-granularity", "value"),
+        State("column-axis", "value"),
+        State("detail-table", "sort_by"),
+        prevent_initial_call=True,
+    )
+    def export_csv(
+        n_clicks,
+        portfolios,
+        layers,
+        factors,
+        windows,
+        directions,
+        start_date,
+        end_date,
+        abs_value_range,
+        distance_range,
+        pivot_selection,
+        group_header_filter,
+        granularity_override,
+        column_axis,
+        sort_by,
+    ):
+        """Export filtered breaches as CSV (no row limit)."""
+        if not n_clicks:
+            return no_update
+
+        where_sql, params = build_where_clause(
+            portfolios,
+            layers,
+            factors,
+            windows,
+            directions,
+            start_date,
+            end_date,
+            abs_value_range,
+            distance_range,
+        )
+
+        selection_sql, selection_params = build_selection_where(
+            pivot_selection,
+            granularity_override,
+            column_axis,
+        )
+        if selection_sql:
+            if where_sql:
+                where_sql += " AND " + selection_sql
+            else:
+                where_sql = "WHERE " + selection_sql
+            params.extend(selection_params)
+
+        group_filter_sql, group_filter_params = build_selection_where(
+            group_header_filter, None, None,
+        )
+        if group_filter_sql:
+            if where_sql:
+                where_sql += " AND " + group_filter_sql
+            else:
+                where_sql = "WHERE " + group_filter_sql
+            params.extend(group_filter_params)
+
+        # Build ORDER BY from DataTable sort state
+        order_clause = "ORDER BY end_date DESC, portfolio, layer, factor"
+        if sort_by:
+            order_parts = []
+            valid_cols = {
+                "end_date", "portfolio", "layer", "factor", "window",
+                "direction", "value", "threshold_min", "threshold_max",
+                "distance", "abs_value",
+            }
+            for s in sort_by:
+                col = s.get("column_id", "")
+                if col in valid_cols:
+                    direction = "DESC" if s.get("direction") == "desc" else "ASC"
+                    order_parts.append(f'"{col}" {direction}')
+            if order_parts:
+                order_clause = "ORDER BY " + ", ".join(order_parts)
+
+        query = f"""
+            SELECT
+                end_date, portfolio, layer,
+                COALESCE(NULLIF(factor, ''), ?) AS factor,
+                "window", direction, value,
+                threshold_min, threshold_max, distance, abs_value
+            FROM breaches
+            {where_sql}
+            {order_clause}
+        """
+
+        all_params = [NO_FACTOR_LABEL] + params
+
+        with _db_lock:
+            conn = _get_conn()
+            result = conn.execute(query, all_params)
+            columns = [desc[0] for desc in result.description]
+            rows = result.fetchall()
+
+        # Build CSV string
+        buf = io.StringIO()
+        buf.write(",".join(columns) + "\n")
+        for row in rows:
+            buf.write(",".join(str(v) if v is not None else "" for v in row) + "\n")
+
+        filename = f"breaches_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
+        return dcc.send_string(buf.getvalue(), filename=filename)
 
     # --- Hierarchy management callbacks ---
 
@@ -341,18 +469,21 @@ def register_callbacks(app: dash.Dash) -> None:
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
+        Output("group-header-filter-store", "data", allow_duplicate=True),
         *FILTER_INPUTS,
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
         State("pivot-selection-store", "data"),
+        State("group-header-filter-store", "data"),
         prevent_initial_call=True,
     )
     def clear_pivot_selection(*args):
-        """Clear pivot selection when filters, hierarchy, or column axis change."""
-        current_selection = args[-1]
-        if current_selection is None:
-            return no_update
-        return None
+        """Clear pivot selection and group header filter when filters, hierarchy, or column axis change."""
+        current_selection = args[-2]
+        current_group_filter = args[-1]
+        if current_selection is None and current_group_filter is None:
+            return no_update, no_update
+        return None, None
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
@@ -415,6 +546,46 @@ def register_callbacks(app: dash.Dash) -> None:
 
         return new_selection
 
+    # --- Expand state callbacks ---
+
+    app.clientside_callback(
+        ClientsideFunction("pivot", "sync_expand_state"),
+        Output("pivot-expand-store", "data", allow_duplicate=True),
+        Input("pivot-chart-container", "children"),
+        prevent_initial_call=True,
+    )
+
+    @app.callback(
+        Output("pivot-expand-store", "data", allow_duplicate=True),
+        Input("hierarchy-store", "data"),
+        prevent_initial_call=True,
+    )
+    def clear_expand_state(_hierarchy):
+        """Clear expand state when hierarchy changes."""
+        return []
+
+    # --- Group header filter callback ---
+
+    @app.callback(
+        Output("group-header-filter-store", "data"),
+        Input({"type": "group-header", "path": ALL}, "n_clicks"),
+        State("group-header-filter-store", "data"),
+        prevent_initial_call=True,
+    )
+    def handle_group_header_click(n_clicks_list, current_filter):
+        """Handle click on a group header label to filter detail view."""
+        triggered = ctx.triggered_id
+        if not triggered or not isinstance(triggered, dict):
+            return no_update
+        if not any(n_clicks_list):
+            return no_update
+
+        clicked_path = triggered["path"]
+        # Toggle: click same header again clears filter
+        if current_filter and current_filter.get("group_key") == clicked_path:
+            return None
+        return {"type": "group", "group_key": clicked_path}
+
     # --- Pivot chart callback ---
 
     @app.callback(
@@ -425,6 +596,8 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("pivot-granularity", "value"),
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
+        State("pivot-expand-store", "data"),
+        State("group-header-filter-store", "data"),
     )
     def update_pivot_chart(
         portfolios,
@@ -439,10 +612,18 @@ def register_callbacks(app: dash.Dash) -> None:
         granularity_override,
         hierarchy,
         column_axis,
+        expand_state_list,
+        group_header_filter,
     ):
         """Update the Pivot view based on filters, granularity, hierarchy, and column axis."""
         hierarchy = hierarchy or []
         column_axis = column_axis or TIME
+        expand_state = set(expand_state_list) if expand_state_list else None
+        active_filter = (
+            group_header_filter.get("group_key")
+            if group_header_filter
+            else None
+        )
         validate_sql_dimensions(hierarchy, column_axis)
         # Validate granularity against known values; reject tampered client input.
         if granularity_override and granularity_override not in TIME_GRANULARITIES:
@@ -490,12 +671,16 @@ def register_callbacks(app: dash.Dash) -> None:
         # Render outside the lock (pure Python, no DB access needed).
         if is_timeline:
             return _render_timeline_pivot(
-                raw, granularity_override, hierarchy
+                raw, granularity_override, hierarchy,
+                expand_state=expand_state,
+                active_group_filter=active_filter,
             ) + (granularity_style,)
         else:
-            return _render_category_pivot(raw, hierarchy, column_axis) + (
-                granularity_style,
-            )
+            return _render_category_pivot(
+                raw, hierarchy, column_axis,
+                expand_state=expand_state,
+                active_group_filter=active_filter,
+            ) + (granularity_style,)
 
 
 def _query_timeline_pivot(
@@ -560,13 +745,19 @@ def _render_timeline_pivot(
     raw: dict,
     granularity_override: str | None,
     hierarchy: list[str],
+    expand_state: set[str] | None = None,
+    active_group_filter: str | None = None,
 ) -> tuple[list, dict]:
     """Render timeline pivot from pre-fetched data (no DB access)."""
     data = raw["data"]
     granularity = raw["granularity"]
 
     if hierarchy:
-        components = build_hierarchical_pivot(data, hierarchy, granularity)
+        components = build_hierarchical_pivot(
+            data, hierarchy, granularity,
+            expand_state=expand_state,
+            active_group_filter=active_group_filter,
+        )
         if not components:
             return [html.Div("No groups to display.")], {"display": "none"}
         return components, {"display": "none"}
@@ -636,11 +827,16 @@ def _render_category_pivot(
     raw: dict,
     hierarchy: list[str],
     column_axis: str,
+    expand_state: set[str] | None = None,
+    active_group_filter: str | None = None,
 ) -> tuple[list, dict]:
     """Render category pivot from pre-fetched data (no DB access)."""
     data = raw["data"]
     components = build_category_table(
-        data, column_axis, hierarchy=hierarchy if hierarchy else None
+        data, column_axis,
+        hierarchy=hierarchy if hierarchy else None,
+        expand_state=expand_state,
+        active_group_filter=active_group_filter,
     )
 
     # Always include a hidden pivot-timeline-chart so the clickData callback

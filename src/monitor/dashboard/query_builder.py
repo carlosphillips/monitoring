@@ -177,6 +177,20 @@ def build_selection_where(
                         conditions.append(f'"{dim}" = ?')
                         params.append(val)
 
+    elif sel_type == "group":
+        group_key = selection.get("group_key")
+        if group_key:
+            for part in group_key.split("|"):
+                if "=" in part:
+                    dim, val = part.split("=", 1)
+                    if dim not in GROUPABLE_DIMENSIONS:
+                        continue
+                    if dim == "factor" and val == NO_FACTOR_LABEL:
+                        conditions.append("(factor IS NULL OR factor = '')")
+                    else:
+                        conditions.append(f'"{dim}" = ?')
+                        params.append(val)
+
     if conditions:
         return " AND ".join(conditions), params
     return "", []

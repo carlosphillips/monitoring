@@ -34,6 +34,8 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
             # Stores
             dcc.Store(id="hierarchy-store", data=[]),
             dcc.Store(id="pivot-selection-store", data=None),
+            dcc.Store(id="pivot-expand-store", data=[]),
+            dcc.Store(id="group-header-filter-store", data=None),
             # Header
             dbc.Navbar(
                 dbc.Container(
@@ -351,7 +353,21 @@ def _build_detail_section() -> html.Div:
 
     return html.Div(
         [
-            html.H5("Detail View", className="mb-2"),
+            dcc.Download(id="export-csv-download"),
+            html.Div(
+                [
+                    html.H5("Detail View", className="mb-0"),
+                    dbc.Button(
+                        "Export CSV",
+                        id="export-csv-btn",
+                        size="sm",
+                        color="secondary",
+                        className="ms-auto",
+                    ),
+                ],
+                style={"display": "flex", "alignItems": "center"},
+                className="mb-2",
+            ),
             dash_table.DataTable(
                 id="detail-table",
                 columns=columns,
