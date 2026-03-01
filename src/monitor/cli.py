@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from monitor import DataError, carino, parquet_output, reports
+from monitor import DataError, carino, consolidate, parquet_output, reports
 from monitor import breach as breach_mod
 from monitor import data as data_mod
 from monitor import portfolios as portfolios_mod
@@ -133,6 +133,9 @@ def main(input_dir: Path, thresholds_dir: Path | None, output_dir: Path, parquet
         except DataError as e:
             logger.error("  Error processing %s: %s", portfolio.name, e)
             errors[portfolio.name] = e
+
+    if parquet:
+        consolidate.consolidate_parquet_files(output_dir)
 
     reports.generate(results, errors, output_dir)
     logger.info("Reports written to %s", output_dir)
