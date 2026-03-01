@@ -6,6 +6,7 @@ import pytest
 
 from monitor.dashboard.callbacks import _get_available_dimensions, _get_column_axis_options
 from monitor.dashboard.query_builder import (
+    append_where,
     build_selection_where,
     build_where_clause,
     validate_sql_dimensions,
@@ -326,6 +327,144 @@ class TestBuildSelectionWhere:
 
     def test_empty_selection_dict(self):
         sql, params = build_selection_where({}, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_group_selection_single_level(self):
+        selection = {"type": "group", "group_key": "portfolio=portfolio_a"}
+        sql, params = build_selection_where(selection, None, None)
+        assert '"portfolio" = ?' in sql
+        assert params == ["portfolio_a"]
+
+    def test_group_selection_multi_level(self):
+        selection = {
+            "type": "group",
+            "group_key": "portfolio=portfolio_a|layer=structural",
+        }
+        sql, params = build_selection_where(selection, None, None)
+        assert '"portfolio" = ?' in sql
+        assert '"layer" = ?' in sql
+        assert "portfolio_a" in params
+        assert "structural" in params
+
+    def test_group_selection_invalid_dim_skipped(self):
+        selection = {"type": "group", "group_key": "invalid_dim=value"}
+        sql, params = build_selection_where(selection, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_group_selection_no_factor(self):
+        selection = {"type": "group", "group_key": f"factor={NO_FACTOR_LABEL}"}
+        sql, params = build_selection_where(selection, None, None)
+        assert "factor IS NULL OR factor = ''" in sql
+        assert params == []
+
+    def test_group_selection_empty_key(self):
+        selection = {"type": "group", "group_key": ""}
+        sql, params = build_selection_where(selection, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_group_selection_no_key(self):
+        selection = {"type": "group"}
+        sql, params = build_selection_where(selection, None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_empty_list(self):
+        sql, params = build_selection_where([], None, None)
+        assert sql == ""
+        assert params == []
+
+    def test_single_element_list(self):
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_a",
+                "group_key": "__flat__",
+            }
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert '"portfolio" = ?' in sql
+        assert params == ["portfolio_a"]
+        # Single selection should not have OR
+        assert "OR" not in sql
+
+    def test_multi_select_two_categories(self):
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_a",
+                "group_key": "__flat__",
+            },
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_b",
+                "group_key": "__flat__",
+            },
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert "OR" in sql
+        assert params == ["portfolio_a", "portfolio_b"]
+
+    def test_multi_select_mixed_types(self):
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_a",
+                "group_key": "__flat__",
+            },
+            {
+                "type": "group",
+                "group_key": "layer=structural",
+            },
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert "OR" in sql
+        assert "portfolio_a" in params
+        assert "structural" in params
+
+    def test_multi_select_skips_invalid(self):
+        selections = [
+            {
+                "type": "category",
+                "column_dim": "portfolio",
+                "column_value": "portfolio_a",
+                "group_key": "__flat__",
+            },
+            {},  # invalid, should be skipped
+        ]
+        sql, params = build_selection_where(selections, None, "portfolio")
+        assert '"portfolio" = ?' in sql
+        assert params == ["portfolio_a"]
+        # Only one valid selection, no OR
+        assert "OR" not in sql
+
+
+class TestAppendWhere:
+    """Tests for append_where() -- WHERE clause composition."""
+
+    def test_appends_to_existing_where(self):
+        sql, params = append_where("WHERE a = ?", ["x"], "b = ?", ["y"])
+        assert sql == "WHERE a = ? AND b = ?"
+        assert params == ["x", "y"]
+
+    def test_creates_where_from_empty(self):
+        sql, params = append_where("", [], "a = ?", ["x"])
+        assert sql == "WHERE a = ?"
+        assert params == ["x"]
+
+    def test_noop_when_extra_empty(self):
+        sql, params = append_where("WHERE a = ?", ["x"], "", [])
+        assert sql == "WHERE a = ?"
+        assert params == ["x"]
+
+    def test_noop_when_both_empty(self):
+        sql, params = append_where("", [], "", [])
         assert sql == ""
         assert params == []
 

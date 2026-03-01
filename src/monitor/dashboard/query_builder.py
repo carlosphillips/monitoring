@@ -117,16 +117,96 @@ def build_where_clause(
     return "", []
 
 
+def append_where(
+    where_sql: str,
+    params: list[str | float],
+    extra_sql: str,
+    extra_params: list[str],
+) -> tuple[str, list[str | float]]:
+    """Append an AND-joined SQL fragment to an existing WHERE clause.
+
+    If *extra_sql* is empty the inputs are returned unchanged.
+    """
+    if not extra_sql:
+        return where_sql, params
+    if where_sql:
+        where_sql += " AND " + extra_sql
+    else:
+        where_sql = "WHERE " + extra_sql
+    params.extend(extra_params)
+    return where_sql, params
+
+
+def _parse_group_key_conditions(
+    group_key: str,
+    conditions: list[str],
+    params: list[str],
+) -> None:
+    """Parse a pipe-delimited group key into SQL conditions and params.
+
+    Each segment has the form ``dim=value``.  Dimensions are validated
+    against the allow-list; unknown dimensions are silently skipped.
+    """
+    for part in group_key.split("|"):
+        if "=" not in part:
+            continue
+        dim, val = part.split("=", 1)
+        if dim not in GROUPABLE_DIMENSIONS:
+            continue
+        if dim == "factor" and val == NO_FACTOR_LABEL:
+            conditions.append("(factor IS NULL OR factor = '')")
+        else:
+            conditions.append(f'"{dim}" = ?')
+            params.append(val)
+
+
 def build_selection_where(
-    selection: dict | None,
+    selections: list[dict] | dict | None,
     granularity_override: str | None,
     column_axis: str | None,
 ) -> tuple[str, list[str]]:
-    """Build additional WHERE conditions from a pivot selection.
+    """Build additional WHERE conditions from pivot selection(s).
+
+    Accepts a list of selection dicts (multi-select) or a single dict
+    (backward-compatible).  Multiple selections are OR'd together so the
+    detail view shows the union of all selected cells.
 
     Returns:
         (sql_fragment, params) -- the SQL does NOT include "WHERE" prefix.
     """
+    # Normalise input: single dict → one-element list, None/empty → []
+    if selections is None:
+        selections = []
+    elif isinstance(selections, dict):
+        selections = [selections]
+
+    if not selections:
+        return "", []
+
+    parts: list[str] = []
+    all_params: list[str] = []
+    for sel in selections:
+        sql, params = _build_single_selection_where(
+            sel, granularity_override, column_axis,
+        )
+        if sql:
+            parts.append(f"({sql})")
+            all_params.extend(params)
+
+    if not parts:
+        return "", []
+    if len(parts) == 1:
+        # Avoid unnecessary parentheses for single selection
+        return parts[0].strip("()"), all_params
+    return " OR ".join(parts), all_params
+
+
+def _build_single_selection_where(
+    selection: dict,
+    granularity_override: str | None,
+    column_axis: str | None,
+) -> tuple[str, list[str]]:
+    """Build WHERE conditions from a single pivot selection dict."""
     if not selection:
         return "", []
 
@@ -163,33 +243,13 @@ def build_selection_where(
                 conditions.append(f'"{col_dim}" = ?')
                 params.append(col_value)
 
-        # Parse group key to add group filters
         if group_key and group_key != "__flat__":
-            for part in group_key.split("|"):
-                if "=" in part:
-                    dim, val = part.split("=", 1)
-                    # Validate dim against allow-list before SQL interpolation
-                    if dim not in GROUPABLE_DIMENSIONS:
-                        continue
-                    if dim == "factor" and val == NO_FACTOR_LABEL:
-                        conditions.append("(factor IS NULL OR factor = '')")
-                    else:
-                        conditions.append(f'"{dim}" = ?')
-                        params.append(val)
+            _parse_group_key_conditions(group_key, conditions, params)
 
     elif sel_type == "group":
         group_key = selection.get("group_key")
         if group_key:
-            for part in group_key.split("|"):
-                if "=" in part:
-                    dim, val = part.split("=", 1)
-                    if dim not in GROUPABLE_DIMENSIONS:
-                        continue
-                    if dim == "factor" and val == NO_FACTOR_LABEL:
-                        conditions.append("(factor IS NULL OR factor = '')")
-                    else:
-                        conditions.append(f'"{dim}" = ?')
-                        params.append(val)
+            _parse_group_key_conditions(group_key, conditions, params)
 
     if conditions:
         return " AND ".join(conditions), params

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import threading
 from datetime import datetime
@@ -28,6 +29,7 @@ from monitor.dashboard.pivot import (
     build_timeline_figure,
 )
 from monitor.dashboard.query_builder import (
+    append_where,
     build_selection_where,
     build_where_clause,
     validate_sql_dimensions,
@@ -40,6 +42,10 @@ _db_lock = threading.Lock()
 # Maximum number of rows sent to the browser for the detail table.
 # We fetch one extra row to detect truncation without a separate COUNT query.
 DETAIL_TABLE_MAX_ROWS = 1000
+
+# Maximum number of rows in a CSV export.  Bounds memory usage and lock
+# hold time so a single export cannot starve other dashboard callbacks.
+CSV_EXPORT_MAX_ROWS = 100_000
 
 # Shared filter inputs used by multiple callbacks.
 # Defined once to avoid duplication; use ``*FILTER_INPUTS`` in decorators.
@@ -107,6 +113,28 @@ def _get_column_axis_options(hierarchy: list[str]) -> list[dict]:
     ]
 
 
+def _build_full_where(
+    portfolios, layers, factors, windows, directions,
+    start_date, end_date, abs_value_range, distance_range,
+    pivot_selection, group_header_filter,
+    granularity_override, column_axis,
+) -> tuple[str, list]:
+    """Build the complete WHERE clause combining filters, pivot selection, and group header."""
+    where_sql, params = build_where_clause(
+        portfolios, layers, factors, windows, directions,
+        start_date, end_date, abs_value_range, distance_range,
+    )
+    where_sql, params = append_where(
+        where_sql, params,
+        *build_selection_where(pivot_selection, granularity_override, column_axis),
+    )
+    where_sql, params = append_where(
+        where_sql, params,
+        *build_selection_where(group_header_filter, None, None),
+    )
+    return where_sql, params
+
+
 def register_callbacks(app: dash.Dash) -> None:
     """Register all dashboard callbacks on the Dash app."""
 
@@ -172,41 +200,12 @@ def register_callbacks(app: dash.Dash) -> None:
         When a pivot selection is active, adds extra WHERE conditions to
         show only the breaches contributing to the selected pivot element.
         """
-        where_sql, params = build_where_clause(
-            portfolios,
-            layers,
-            factors,
-            windows,
-            directions,
-            start_date,
-            end_date,
-            abs_value_range,
-            distance_range,
+        where_sql, params = _build_full_where(
+            portfolios, layers, factors, windows, directions,
+            start_date, end_date, abs_value_range, distance_range,
+            pivot_selection, group_header_filter,
+            granularity_override, column_axis,
         )
-
-        # Add pivot selection filter
-        selection_sql, selection_params = build_selection_where(
-            pivot_selection,
-            granularity_override,
-            column_axis,
-        )
-        if selection_sql:
-            if where_sql:
-                where_sql += " AND " + selection_sql
-            else:
-                where_sql = "WHERE " + selection_sql
-            params.extend(selection_params)
-
-        # Add group header filter
-        group_filter_sql, group_filter_params = build_selection_where(
-            group_header_filter, None, None,
-        )
-        if group_filter_sql:
-            if where_sql:
-                where_sql += " AND " + group_filter_sql
-            else:
-                where_sql = "WHERE " + group_filter_sql
-            params.extend(group_filter_params)
 
         query = f"""
             SELECT
@@ -271,43 +270,16 @@ def register_callbacks(app: dash.Dash) -> None:
         column_axis,
         sort_by,
     ):
-        """Export filtered breaches as CSV (no row limit)."""
+        """Export filtered breaches as CSV."""
         if not n_clicks:
             return no_update
 
-        where_sql, params = build_where_clause(
-            portfolios,
-            layers,
-            factors,
-            windows,
-            directions,
-            start_date,
-            end_date,
-            abs_value_range,
-            distance_range,
+        where_sql, params = _build_full_where(
+            portfolios, layers, factors, windows, directions,
+            start_date, end_date, abs_value_range, distance_range,
+            pivot_selection, group_header_filter,
+            granularity_override, column_axis,
         )
-
-        selection_sql, selection_params = build_selection_where(
-            pivot_selection,
-            granularity_override,
-            column_axis,
-        )
-        if selection_sql:
-            if where_sql:
-                where_sql += " AND " + selection_sql
-            else:
-                where_sql = "WHERE " + selection_sql
-            params.extend(selection_params)
-
-        group_filter_sql, group_filter_params = build_selection_where(
-            group_header_filter, None, None,
-        )
-        if group_filter_sql:
-            if where_sql:
-                where_sql += " AND " + group_filter_sql
-            else:
-                where_sql = "WHERE " + group_filter_sql
-            params.extend(group_filter_params)
 
         # Build ORDER BY from DataTable sort state
         order_clause = "ORDER BY end_date DESC, portfolio, layer, factor"
@@ -335,6 +307,7 @@ def register_callbacks(app: dash.Dash) -> None:
             FROM breaches
             {where_sql}
             {order_clause}
+            LIMIT {CSV_EXPORT_MAX_ROWS}
         """
 
         all_params = [NO_FACTOR_LABEL] + params
@@ -345,11 +318,13 @@ def register_callbacks(app: dash.Dash) -> None:
             columns = [desc[0] for desc in result.description]
             rows = result.fetchall()
 
-        # Build CSV string
+        # Build CSV string using stdlib csv.writer for proper escaping
         buf = io.StringIO()
-        buf.write(",".join(columns) + "\n")
-        for row in rows:
-            buf.write(",".join(str(v) if v is not None else "" for v in row) + "\n")
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        writer.writerows(
+            [v if v is not None else "" for v in row] for row in rows
+        )
 
         filename = f"breaches_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
         return dcc.send_string(buf.getvalue(), filename=filename)
@@ -481,9 +456,9 @@ def register_callbacks(app: dash.Dash) -> None:
         """Clear pivot selection and group header filter when filters, hierarchy, or column axis change."""
         current_selection = args[-2]
         current_group_filter = args[-1]
-        if current_selection is None and current_group_filter is None:
+        if not current_selection and current_group_filter is None:
             return no_update, no_update
-        return None, None
+        return [], None
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
@@ -510,10 +485,10 @@ def register_callbacks(app: dash.Dash) -> None:
         }
 
         # Click same element again to deselect
-        if current_selection and current_selection == new_selection:
-            return None
+        if current_selection and current_selection == [new_selection]:
+            return []
 
-        return new_selection
+        return [new_selection]
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
@@ -541,10 +516,11 @@ def register_callbacks(app: dash.Dash) -> None:
             "group_key": group_key,
         }
 
-        if current_selection and current_selection == new_selection:
-            return None
+        # Click same element again to deselect
+        if current_selection and current_selection == [new_selection]:
+            return []
 
-        return new_selection
+        return [new_selection]
 
     # --- Expand state callbacks ---
 

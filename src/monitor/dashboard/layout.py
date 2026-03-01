@@ -33,7 +33,7 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
         [
             # Stores
             dcc.Store(id="hierarchy-store", data=[]),
-            dcc.Store(id="pivot-selection-store", data=None),
+            dcc.Store(id="pivot-selection-store", data=[]),
             dcc.Store(id="pivot-expand-store", data=[]),
             dcc.Store(id="group-header-filter-store", data=None),
             # Header
