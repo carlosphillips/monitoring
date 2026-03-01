@@ -4,10 +4,98 @@ All filter and hierarchy inputs converge to a single `compute_app_state()` callb
 that validates and stores DashboardState in dcc.Store. This prevents race conditions
 and state desynchronization.
 
-Callback chain:
-1. compute_app_state() → Input triggers → updates "app-state" Store (single source of truth)
-2. fetch_breach_data() → Input from "app-state" → executes query → updates "breach-data" Store
-3. render_timelines() / render_table() → Input from "breach-data" → renders visualization
+Callback chain (3-stage pipeline):
+=================================
+
+STAGE 1: compute_app_state() → "app-state" Store
+  Inputs: All UI controls (portfolio-select, date-range-picker, layer-filter, etc.)
+  Output: Canonical DashboardState (validated and normalized)
+
+  Responsibilities:
+    - Normalize portfolio selection (list or string → list)
+    - Parse date range strings → date tuples
+    - Build hierarchy dimensions list (filter out None)
+    - Extract brush selection from timeline box-select
+    - Validate all inputs using Pydantic validators
+
+  Example: User selects ["Portfolio A", "Portfolio B"] + date range
+           → DashboardState(selected_portfolios=[...], date_range=(start, end))
+
+STAGE 2: fetch_breach_data() with LRU Cache → "breach-data" Store
+  Input: "app-state" Store (canonical state)
+  Output: Query results (timeseries_data, crosstab_data)
+  Mechanism: cached_query_execution() with @lru_cache(maxsize=128)
+
+  Responsibilities:
+    - Convert state to hashable cache key tuples (lists → tuples)
+    - Execute DuckDB queries using TimeSeriesAggregator + CrossTabAggregator
+    - Cache results to avoid redundant DB queries
+    - Compute intersection of primary date_range + brush_selection
+
+  Cache Key Components:
+    - portfolio_tuple: Which portfolios to include
+    - date_range_tuple: Primary date filter (ISO strings)
+    - brush_selection_tuple: Secondary date filter from timeline (ISO strings)
+    - hierarchy_tuple: Which dimensions to group by
+    - layer/factor/window/direction tuples: Additional filters
+
+  Example cache hit:
+    User changes brush_selection on timeline
+    → New brush_selection_tuple → Cache MISS (new key)
+    → Query executed, results cached
+    → User changes date_range slider
+    → Same brush + hierarchy + filters → Cache HIT
+    → Returns same results (date filtering in SQL WHERE, not cache key)
+
+  Date Range Logic:
+    - Primary range: From date-range-picker input (UI control)
+    - Secondary range: From timeline box-select (brush_selection)
+    - Effective range: INTERSECTION of both (max(start), min(end))
+    - Both applied in SQL WHERE clause: "end_date >= $date_start AND end_date <= $date_end"
+
+STAGE 3: render_timelines() and render_table() → Graph/Table Divs
+  Inputs:
+    - "breach-data" Store (aggregated query results)
+    - "app-state" Store (for expanded_groups visibility filtering)
+  Output: Plotly Figure (synchronized timelines) or AG Grid (split-cell table)
+
+  Responsibilities:
+    - Convert query results to DataFrame
+    - Filter rows by expanded_groups state (show/hide hierarchy groups)
+    - Build Plotly/AG Grid visualizations
+    - Handle empty data gracefully
+    - Apply error handling and logging
+
+  Why Two Inputs?
+    - breach-data: Contains aggregated numbers (cacheable)
+    - app-state: Contains expanded_groups (UI state, uncacheable)
+    - When user collapses a group, only app-state changes
+    - Render callback filters the cached breach-data by expanded_groups
+    - Same query result visualized differently based on expansion state
+
+  Expansion State Semantics:
+    - expanded_groups=None (default): Show all groups
+    - expanded_groups={'tactical', 'residual'}: Show only these groups
+    - Logic in Stage 3: "if expanded_groups is not None, filter()"
+
+ERROR HANDLING:
+  - Stage 1: Catches ValueError, returns previous state or default
+  - Stage 2: Catches Exception, returns empty results + error message
+  - Stage 3: Catches Exception, returns Div with error message (no crash)
+
+CACHE INVALIDATION:
+  - Manual refresh button: Calls cached_query_execution.cache_clear()
+  - App restart: LRU cache reset (entries lost)
+  - No TTL: Cache persists indefinitely until refresh or restart
+
+PERFORMANCE IMPLICATIONS:
+  - Typical workflow: User filters → Stage 1 updates state
+    → Stage 2 executes query (first time) → Results cached
+    → User changes brush selection → Stage 2 cache MISS → Query re-executed
+    → Query results stay <1s (DuckDB in-memory)
+  - Power users: Can accumulate 128 cache entries (different filter combinations)
+    → Still <1s per query, even on cache miss
+  - Memory: 128 entries × ~50KB avg result = ~6.4MB max cache overhead
 """
 
 from __future__ import annotations
@@ -50,11 +138,13 @@ logger = logging.getLogger(__name__)
 
 
 def register_state_callback(app) -> None:
-    """Register the canonical state management callback.
+    """Register Stage 1 callback: normalize UI inputs → canonical DashboardState.
 
     This callback is the single entry point for all state changes. It validates
     all inputs and stores a canonical DashboardState in dcc.Store, preventing
     race conditions and desynchronization.
+
+    See module docstring for full callback chain explanation (Stage 1).
 
     Args:
         app: Dash app instance
@@ -318,10 +408,12 @@ def cached_query_execution(
 
 
 def register_query_callback(app) -> None:
-    """Register the breach data query callback.
+    """Register Stage 2 callback: execute cached DuckDB queries.
 
     This callback depends on app-state and executes DuckDB queries,
     caching results for performance.
+
+    See module docstring for cache strategy and date range logic.
 
     Args:
         app: Dash app instance
@@ -400,10 +492,12 @@ def register_query_callback(app) -> None:
 
 
 def register_visualization_callbacks(app) -> None:
-    """Register visualization callbacks (timelines, tables, drill-down).
+    """Register Stage 3 callbacks: render timelines and tables.
 
     These callbacks depend on breach-data and app-state stores.
     They render synchronized timelines (time-grouped) or split-cell tables (non-time).
+
+    See module docstring for why both breach-data and app-state are needed.
 
     Args:
         app: Dash app instance

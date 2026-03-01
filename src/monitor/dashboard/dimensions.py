@@ -10,7 +10,7 @@ filter/group capabilities). This enables:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable
 
 
 @dataclass
@@ -23,7 +23,7 @@ class DimensionDef:
     is_filterable: bool = True
     is_groupable: bool = True
     # Optional: Custom filter UI builder for complex dimensions
-    filter_ui_builder: Optional[Callable[..., list]] = None
+    filter_ui_builder: Callable[..., list] | None = None
 
 
 # All valid dimensions for the dashboard

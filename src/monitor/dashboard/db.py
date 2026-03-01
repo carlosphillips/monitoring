@@ -10,7 +10,7 @@ import logging
 import time
 from pathlib import Path
 from threading import Lock
-from typing import Any, Optional
+from typing import Any
 
 import duckdb
 
@@ -24,7 +24,7 @@ class DuckDBConnector:
     with consolidated parquet files loaded into memory tables.
     """
 
-    _instance: Optional[DuckDBConnector] = None
+    _instance: DuckDBConnector | None = None
     _lock = Lock()
 
     def __new__(cls) -> DuckDBConnector:
@@ -139,7 +139,7 @@ class DuckDBConnector:
     def execute(
         self,
         sql: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         retry_count: int = 3,
         retry_delay_ms: int = 100,
     ) -> list[dict[str, Any]]:
@@ -181,7 +181,7 @@ class DuckDBConnector:
     def query_breaches(
         self,
         sql: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute query on breaches table.
 
@@ -197,7 +197,7 @@ class DuckDBConnector:
     def query_attributions(
         self,
         sql: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute query on attributions table.
 

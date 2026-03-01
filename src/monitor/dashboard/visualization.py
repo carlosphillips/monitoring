@@ -302,7 +302,7 @@ def build_split_cell_table(
     # Ensure required columns exist
     required_cols = ["upper_breaches", "lower_breaches", "total_breaches"]
     for col in required_cols:
-        if col not in required_cols:
+        if col not in df.columns:
             logger.warning("Column '%s' not found in crosstab data", col)
             df[col] = 0
 

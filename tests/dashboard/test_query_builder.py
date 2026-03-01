@@ -20,15 +20,17 @@ class TestFilterSpec:
 
     def test_valid_filter_spec(self) -> None:
         """Valid filter spec should pass validation."""
+        # Pydantic validates on instantiation
         spec = FilterSpec(dimension="layer", values=["tactical", "residual"])
-        spec.validate()  # Should not raise
+        assert spec.dimension == "layer"
+        assert spec.values == ["tactical", "residual"]
 
     def test_invalid_dimension(self) -> None:
         """Invalid dimension should be accepted (dimension validation handled elsewhere)."""
         # Pydantic only validates that dimension is non-empty
         # Actual dimension validity is checked via DimensionValidator in BreachQuery
         spec = FilterSpec(dimension="invalid_dim", values=["value"])
-        spec.validate()  # Should not raise (Pydantic validation succeeded)
+        assert spec.dimension == "invalid_dim"
 
     def test_empty_values(self) -> None:
         """Empty values list should fail during instantiation."""

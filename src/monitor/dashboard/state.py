@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
@@ -29,12 +28,6 @@ class FilterSpec(BaseModel):
         if not v:
             raise ValueError("Filter values cannot be empty")
         return v
-
-    def validate(self) -> None:
-        """Explicit validation (Pydantic validates automatically on instantiation)."""
-        # Pydantic validation happens at instantiation, so this is a no-op
-        # but kept for backward compatibility with code that calls validate()
-        pass
 
 
 class DashboardState(BaseModel):

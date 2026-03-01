@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from monitor.dashboard.dimensions import get_column_name
 from monitor.dashboard.state import FilterSpec
@@ -33,8 +33,8 @@ class BreachQuery:
     filters: list[FilterSpec] = field(default_factory=list)
     group_by: list[str] = field(default_factory=list)
     include_date_in_group: bool = True  # Include end_date in GROUP BY?
-    date_range_start: Optional[str] = None  # ISO date string
-    date_range_end: Optional[str] = None  # ISO date string
+    date_range_start: str | None = None  # ISO date string
+    date_range_end: str | None = None  # ISO date string
 
     def validate(self) -> None:
         """Validate query specification.
@@ -42,10 +42,6 @@ class BreachQuery:
         Raises:
             ValueError: If query is invalid
         """
-        # Validate filters
-        for f in self.filters:
-            f.validate()
-
         # Validate GROUP BY dimensions
         if not DimensionValidator.validate_group_by(self.group_by):
             raise ValueError(f"Invalid GROUP BY dimensions: {self.group_by}")
@@ -344,10 +340,6 @@ class DrillDownQuery:
         Returns:
             Tuple of (SQL string, params dict)
         """
-        # Validate filters
-        for f in filters:
-            f.validate()
-
         # Build WHERE clause
         where_parts = []
         params = {}
