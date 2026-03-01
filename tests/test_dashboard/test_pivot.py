@@ -138,6 +138,73 @@ class TestBuildTimelineFigure:
         assert list(fig.data[0].x) == ["2024-01-01", "2024-01-02", "2024-01-03"]
 
 
+class TestBuildTimelineFigureBrush:
+    """Tests for brush range vrect overlay in build_timeline_figure()."""
+
+    def test_no_brush_no_shapes(self):
+        data = [{"time_bucket": "2024-01-01", "direction": "lower", "count": 1}]
+        fig = build_timeline_figure(data, "Daily")
+        assert fig.layout.shapes == ()
+
+    def test_brush_adds_vrect(self):
+        data = [{"time_bucket": "2024-01-01", "direction": "lower", "count": 1}]
+        brush = {"start": "2024-01-01", "end": "2024-01-15"}
+        fig = build_timeline_figure(data, "Daily", brush_range=brush)
+        assert len(fig.layout.shapes) == 1
+        shape = fig.layout.shapes[0]
+        assert shape.type == "rect"
+        assert shape.x0 == "2024-01-01"
+        assert shape.x1 == "2024-01-15"
+
+    def test_brush_missing_start_no_shapes(self):
+        data = [{"time_bucket": "2024-01-01", "direction": "lower", "count": 1}]
+        brush = {"end": "2024-01-15"}
+        fig = build_timeline_figure(data, "Daily", brush_range=brush)
+        assert fig.layout.shapes == ()
+
+    def test_dragmode_is_zoom(self):
+        data = [{"time_bucket": "2024-01-01", "direction": "lower", "count": 1}]
+        fig = build_timeline_figure(data, "Daily")
+        assert fig.layout.dragmode == "zoom"
+
+
+class TestBuildHierarchicalPivotGroupChartIds:
+    """Tests for pattern-matching IDs on group timeline charts."""
+
+    def test_group_charts_have_pattern_matching_ids(self):
+        from dash import dcc
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 3},
+            {"portfolio": "b", "time_bucket": "2024-01", "direction": "upper", "count": 1},
+        ]
+        result = build_hierarchical_pivot(data, ["portfolio"], "Daily")
+        # Each Details element should contain a Graph with a pattern-matching ID
+        for details in result:
+            # Open the details to find the chart
+            content_div = details.children[1]  # content after summary
+            chart = content_div.children
+            if isinstance(chart, dcc.Graph):
+                assert isinstance(chart.id, dict)
+                assert chart.id["type"] == "group-timeline-chart"
+                assert "group" in chart.id
+
+    def test_brush_range_propagates_to_group_charts(self):
+        from dash import dcc
+        data = [
+            {"portfolio": "a", "time_bucket": "2024-01", "direction": "lower", "count": 3},
+        ]
+        brush = {"start": "2024-01-01", "end": "2024-01-15"}
+        result = build_hierarchical_pivot(
+            data, ["portfolio"], "Daily", brush_range=brush,
+        )
+        # Find the Graph inside the Details element
+        details = result[0]
+        content_div = details.children[1]
+        chart = content_div.children
+        if isinstance(chart, dcc.Graph):
+            assert len(chart.figure.layout.shapes) == 1
+
+
 class TestTimelineBucketing:
     """Integration tests: verify DuckDB bucketing produces correct data for the chart."""
 

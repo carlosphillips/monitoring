@@ -30,6 +30,7 @@ from monitor.dashboard.pivot import (
 )
 from monitor.dashboard.query_builder import (
     append_where,
+    build_brush_where,
     build_selection_where,
     build_where_clause,
     validate_sql_dimensions,
@@ -118,8 +119,9 @@ def _build_full_where(
     start_date, end_date, abs_value_range, distance_range,
     pivot_selection, group_header_filter,
     granularity_override, column_axis,
+    brush_range=None,
 ) -> tuple[str, list]:
-    """Build the complete WHERE clause combining filters, pivot selection, and group header."""
+    """Build the complete WHERE clause combining filters, pivot selection, group header, and brush."""
     where_sql, params = build_where_clause(
         portfolios, layers, factors, windows, directions,
         start_date, end_date, abs_value_range, distance_range,
@@ -131,6 +133,10 @@ def _build_full_where(
     where_sql, params = append_where(
         where_sql, params,
         *build_selection_where(group_header_filter, None, None),
+    )
+    where_sql, params = append_where(
+        where_sql, params,
+        *build_brush_where(brush_range),
     )
     return where_sql, params
 
@@ -152,6 +158,25 @@ def _build_selected_cells_set(
             if col_value and group_key:
                 result.add((col_value, group_key))
     return result if result else None
+
+
+def _extract_brush_range(relayout_data: dict):
+    """Extract brush range from Plotly relayoutData.
+
+    Returns:
+        - dict {"start": ..., "end": ...} when the user brushes a range.
+        - None when the user double-clicks to reset (autorange).
+        - no_update for irrelevant relayout events (e.g. legend toggle).
+    """
+    if "xaxis.autorange" in relayout_data:
+        return None
+    start = relayout_data.get("xaxis.range[0]")
+    end = relayout_data.get("xaxis.range[1]")
+    if start is not None and end is not None:
+        # Plotly may return dates as "2024-01-15" or "2024-01-15 00:00:00"
+        # Truncate to YYYY-MM-DD for DuckDB date comparison
+        return {"start": str(start)[:10], "end": str(end)[:10]}
+    return no_update
 
 
 def register_callbacks(app: dash.Dash) -> None:
@@ -196,6 +221,7 @@ def register_callbacks(app: dash.Dash) -> None:
         *FILTER_INPUTS,
         Input("pivot-selection-store", "data"),
         Input("group-header-filter-store", "data"),
+        Input("brush-range-store", "data"),
         State("pivot-granularity", "value"),
         State("column-axis", "value"),
     )
@@ -211,6 +237,7 @@ def register_callbacks(app: dash.Dash) -> None:
         distance_range,
         pivot_selection,
         group_header_filter,
+        brush_range,
         granularity_override,
         column_axis,
     ):
@@ -218,12 +245,14 @@ def register_callbacks(app: dash.Dash) -> None:
 
         When a pivot selection is active, adds extra WHERE conditions to
         show only the breaches contributing to the selected pivot element.
+        When a brush range is active, adds date range conditions.
         """
         where_sql, params = _build_full_where(
             portfolios, layers, factors, windows, directions,
             start_date, end_date, abs_value_range, distance_range,
             pivot_selection, group_header_filter,
             granularity_override, column_axis,
+            brush_range=brush_range,
         )
 
         query = f"""
@@ -267,6 +296,7 @@ def register_callbacks(app: dash.Dash) -> None:
         *[State(i.component_id, i.component_property) for i in FILTER_INPUTS],
         State("pivot-selection-store", "data"),
         State("group-header-filter-store", "data"),
+        State("brush-range-store", "data"),
         State("pivot-granularity", "value"),
         State("column-axis", "value"),
         State("detail-table", "sort_by"),
@@ -285,6 +315,7 @@ def register_callbacks(app: dash.Dash) -> None:
         distance_range,
         pivot_selection,
         group_header_filter,
+        brush_range,
         granularity_override,
         column_axis,
         sort_by,
@@ -298,6 +329,7 @@ def register_callbacks(app: dash.Dash) -> None:
             start_date, end_date, abs_value_range, distance_range,
             pivot_selection, group_header_filter,
             granularity_override, column_axis,
+            brush_range=brush_range,
         )
 
         # Build ORDER BY from DataTable sort state
@@ -465,20 +497,23 @@ def register_callbacks(app: dash.Dash) -> None:
         Output("pivot-selection-store", "data", allow_duplicate=True),
         Output("group-header-filter-store", "data", allow_duplicate=True),
         Output("pivot-selection-anchor-store", "data", allow_duplicate=True),
+        Output("brush-range-store", "data", allow_duplicate=True),
         *FILTER_INPUTS,
         Input("hierarchy-store", "data"),
         Input("column-axis", "value"),
         State("pivot-selection-store", "data"),
         State("group-header-filter-store", "data"),
+        State("brush-range-store", "data"),
         prevent_initial_call=True,
     )
     def clear_pivot_selection(*args):
-        """Clear pivot selection, anchor, and group header filter when filters change."""
-        current_selection = args[-2]
-        current_group_filter = args[-1]
-        if not current_selection and current_group_filter is None:
-            return no_update, no_update, no_update
-        return [], None, None
+        """Clear pivot selection, anchor, group header filter, and brush when filters change."""
+        current_brush = args[-1]
+        current_group_filter = args[-2]
+        current_selection = args[-3]
+        if not current_selection and current_group_filter is None and current_brush is None:
+            return no_update, no_update, no_update, no_update
+        return [], None, None, None
 
     @app.callback(
         Output("pivot-selection-store", "data", allow_duplicate=True),
@@ -613,6 +648,38 @@ def register_callbacks(app: dash.Dash) -> None:
 
         return [new_sel], new_sel
 
+    # --- Brush-select callbacks ---
+
+    @app.callback(
+        Output("brush-range-store", "data", allow_duplicate=True),
+        Input("pivot-timeline-chart", "relayoutData"),
+        prevent_initial_call=True,
+    )
+    def handle_flat_brush(relayout_data):
+        """Capture brush range from the flat (no-hierarchy) timeline chart."""
+        if not relayout_data:
+            return no_update
+        return _extract_brush_range(relayout_data)
+
+    @app.callback(
+        Output("brush-range-store", "data", allow_duplicate=True),
+        Input({"type": "group-timeline-chart", "group": ALL}, "relayoutData"),
+        prevent_initial_call=True,
+    )
+    def handle_group_brush(relayout_data_list):
+        """Capture brush range from any group timeline chart."""
+        if not relayout_data_list:
+            return no_update
+        triggered = ctx.triggered_id
+        if triggered is None:
+            return no_update
+        for i, item in enumerate(ctx.inputs_list[0]):
+            if item["id"] == triggered:
+                data = relayout_data_list[i]
+                if data:
+                    return _extract_brush_range(data)
+        return no_update
+
     # --- Expand state callbacks ---
 
     app.clientside_callback(
@@ -666,6 +733,7 @@ def register_callbacks(app: dash.Dash) -> None:
         Input("pivot-selection-store", "data"),
         State("pivot-expand-store", "data"),
         State("group-header-filter-store", "data"),
+        State("brush-range-store", "data"),
     )
     def update_pivot_chart(
         portfolios,
@@ -683,6 +751,7 @@ def register_callbacks(app: dash.Dash) -> None:
         pivot_selection,
         expand_state_list,
         group_header_filter,
+        brush_range,
     ):
         """Update the Pivot view based on filters, granularity, hierarchy, and column axis."""
         hierarchy = hierarchy or []
@@ -747,6 +816,7 @@ def register_callbacks(app: dash.Dash) -> None:
                 expand_state=expand_state,
                 active_group_filter=active_filter,
                 selected_cells=selected_cells,
+                brush_range=brush_range,
             ) + (granularity_style,)
         else:
             return _render_category_pivot(
@@ -822,22 +892,31 @@ def _render_timeline_pivot(
     expand_state: set[str] | None = None,
     active_group_filter: str | None = None,
     selected_cells: set[tuple[str, str]] | None = None,
+    brush_range: dict | None = None,
 ) -> tuple[list, dict]:
     """Render timeline pivot from pre-fetched data (no DB access)."""
     data = raw["data"]
     granularity = raw["granularity"]
 
     if hierarchy:
+        # Include a hidden flat chart so the flat brush callback always has a target
+        hidden_chart = dcc.Graph(
+            id="pivot-timeline-chart",
+            figure=build_timeline_figure([], "Monthly"),
+            config={"displayModeBar": False},
+            style={"display": "none"},
+        )
         components = build_hierarchical_pivot(
             data, hierarchy, granularity,
             expand_state=expand_state,
             active_group_filter=active_group_filter,
+            brush_range=brush_range,
         )
         if not components:
-            return [html.Div("No groups to display.")], {"display": "none"}
-        return components, {"display": "none"}
+            return [hidden_chart, html.Div("No groups to display.")], {"display": "none"}
+        return [hidden_chart] + components, {"display": "none"}
     else:
-        fig = build_timeline_figure(data, granularity)
+        fig = build_timeline_figure(data, granularity, brush_range=brush_range)
         return (
             [
                 dcc.Graph(

@@ -41,12 +41,14 @@ def auto_granularity(min_date: str, max_date: str) -> str:
 def build_timeline_figure(
     bucket_data: list[dict],
     granularity: str,
+    brush_range: dict | None = None,
 ) -> go.Figure:
     """Build a stacked bar chart from pre-bucketed data.
 
     Args:
         bucket_data: List of dicts with keys: time_bucket, direction, count.
         granularity: Current time granularity label (for axis title).
+        brush_range: Optional {"start": str, "end": str} to draw a vrect overlay.
 
     Returns:
         Plotly Figure with stacked bars (lower=red on bottom, upper=blue on top).
@@ -92,6 +94,24 @@ def build_timeline_figure(
         )
     )
 
+    # Add brush range overlay (vrect)
+    shapes = []
+    if brush_range and brush_range.get("start") and brush_range.get("end"):
+        shapes.append(
+            dict(
+                type="rect",
+                xref="x",
+                yref="paper",
+                x0=brush_range["start"],
+                x1=brush_range["end"],
+                y0=0,
+                y1=1,
+                fillcolor="rgba(13, 110, 253, 0.1)",
+                line=dict(color="rgba(13, 110, 253, 0.5)", width=1),
+                layer="below",
+            )
+        )
+
     fig.update_layout(
         barmode="stack",
         xaxis_title="Time" if granularity == "Daily" else f"Time ({granularity})",
@@ -100,6 +120,8 @@ def build_timeline_figure(
         margin=dict(l=50, r=20, t=30, b=50),
         plot_bgcolor="white",
         bargap=0.15,
+        dragmode="zoom",
+        shapes=shapes,
     )
 
     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="#eee")
@@ -139,7 +161,7 @@ def build_category_table(
             {str(row[column_dim]) for row in category_data if row[column_dim] is not None}
         )
 
-        def _category_leaf(leaf_data, dim, group_val):
+        def _category_leaf(leaf_data, dim, group_val, group_path):
             cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
             group_key = f"{dim}={group_val}"
             return _render_category_html_table(
@@ -147,7 +169,7 @@ def build_category_table(
                 selected_cells=selected_cells,
             )
 
-        def _category_agg(leaf_data, dim, group_val):
+        def _category_agg(leaf_data, dim, group_val, group_path):
             """Render aggregated category cells for collapsed groups."""
             cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
             return _render_category_html_table(
@@ -403,11 +425,11 @@ def _build_tree(
 def _render_tree(
     tree: dict,
     hierarchy: list[str],
-    render_leaf_fn: Callable[[list[dict], str, str], Any],
+    render_leaf_fn: Callable[[list[dict], str, str, str], Any],
     level: int,
     expand_state: set[str] | None = None,
     parent_path: str = "",
-    render_agg_fn: Callable[[list[dict], str, str], Any] | None = None,
+    render_agg_fn: Callable[[list[dict], str, str, str], Any] | None = None,
     active_group_filter: str | None = None,
 ) -> list:
     """Render a tree as nested html.Details components with expand/collapse.
@@ -417,7 +439,7 @@ def _render_tree(
     Args:
         tree: Nested dict from _build_tree.
         hierarchy: List of dimension names for grouping.
-        render_leaf_fn: Callable(leaf_data, dim, group_val) -> Dash component
+        render_leaf_fn: Callable(leaf_data, dim, group_val, group_path) -> Dash component
             to render the leaf content.
         level: Current depth in the hierarchy (0-based).
         expand_state: Set of group paths that should be open.
@@ -470,7 +492,7 @@ def _render_tree(
         agg_chart_div = html.Div(className="agg-chart")
         if render_agg_fn and not is_open and "leaf_data" in data and data["leaf_data"]:
             agg_chart_div = html.Div(
-                render_agg_fn(data["leaf_data"], dim, group_val),
+                render_agg_fn(data["leaf_data"], dim, group_val, group_path),
                 className="agg-chart",
             )
 
@@ -487,7 +509,7 @@ def _render_tree(
         )
 
         if is_leaf:
-            leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val)
+            leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val, group_path)
             children = [
                 summary,
                 html.Div(leaf_content, style={"paddingLeft": "20px"}),
@@ -541,6 +563,7 @@ def build_hierarchical_pivot(
     granularity: str,
     expand_state: set[str] | None = None,
     active_group_filter: str | None = None,
+    brush_range: dict | None = None,
 ) -> list:
     """Build hierarchical pivot components with expand/collapse.
 
@@ -561,7 +584,7 @@ def build_hierarchical_pivot(
     # Build a tree of groups from the flat data
     tree = _build_tree(grouped_data, hierarchy, level=0)
 
-    def _timeline_leaf(leaf_data, dim, group_val):
+    def _timeline_leaf(leaf_data, dim, group_val, group_path):
         bucket_data = [
             {
                 "time_bucket": row["time_bucket"],
@@ -570,14 +593,15 @@ def build_hierarchical_pivot(
             }
             for row in leaf_data
         ]
-        fig = build_timeline_figure(bucket_data, granularity)
+        fig = build_timeline_figure(bucket_data, granularity, brush_range=brush_range)
         return dcc.Graph(
+            id={"type": "group-timeline-chart", "group": group_path},
             figure=fig,
             config={"displayModeBar": False},
             style={"height": "250px"},
         )
 
-    def _timeline_agg(leaf_data, dim, group_val):
+    def _timeline_agg(leaf_data, dim, group_val, group_path):
         """Render aggregated timeline chart for collapsed groups."""
         # Sum counts per (time_bucket, direction) across the group
         agg: dict[tuple[str, str], int] = {}

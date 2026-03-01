@@ -9,8 +9,10 @@ from monitor.dashboard.callbacks import (
     _get_available_dimensions,
     _get_column_axis_options,
 )
+from monitor.dashboard.callbacks import _extract_brush_range
 from monitor.dashboard.query_builder import (
     append_where,
+    build_brush_where,
     build_selection_where,
     build_where_clause,
     validate_sql_dimensions,
@@ -599,6 +601,103 @@ class TestBuildSelectedCellsSet:
         ]
         result = _build_selected_cells_set(selections)
         assert result == {("portfolio_a", "__flat__")}
+
+
+class TestBuildBrushWhere:
+    """Tests for build_brush_where() -- brush time range filtering."""
+
+    def test_none_returns_empty(self):
+        sql, params = build_brush_where(None)
+        assert sql == ""
+        assert params == []
+
+    def test_empty_dict_returns_empty(self):
+        sql, params = build_brush_where({})
+        assert sql == ""
+        assert params == []
+
+    def test_missing_start_returns_empty(self):
+        sql, params = build_brush_where({"end": "2024-01-31"})
+        assert sql == ""
+        assert params == []
+
+    def test_missing_end_returns_empty(self):
+        sql, params = build_brush_where({"start": "2024-01-01"})
+        assert sql == ""
+        assert params == []
+
+    def test_valid_range(self):
+        sql, params = build_brush_where({"start": "2024-01-01", "end": "2024-01-31"})
+        assert "end_date >= ?" in sql
+        assert "end_date <= ?" in sql
+        assert params == ["2024-01-01", "2024-01-31"]
+
+
+class TestBrushWhereIntegration:
+    """Integration tests: brush range filtering with DuckDB."""
+
+    def test_brush_filters_by_date(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        brush_sql, brush_params = build_brush_where(
+            {"start": "2024-01-03", "end": "2024-01-04"}
+        )
+        where_sql = "WHERE " + brush_sql
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", brush_params
+        ).fetchone()[0]
+        # Jan 3: 2 breaches, Jan 4: 1 breach = 3
+        assert count == 3
+
+    def test_brush_combined_with_filters(self, sample_output):
+        from monitor.dashboard.data import load_breaches
+
+        conn = load_breaches(sample_output)
+        where_sql, params = build_where_clause(
+            ["portfolio_a"], None, None, None, None, None, None, None, None
+        )
+        brush_sql, brush_params = build_brush_where(
+            {"start": "2024-01-03", "end": "2024-01-03"}
+        )
+        where_sql, params = append_where(where_sql, params, brush_sql, brush_params)
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM breaches {where_sql}", params
+        ).fetchone()[0]
+        # Jan 3 portfolio_a: 2 breaches
+        assert count == 2
+
+
+class TestExtractBrushRange:
+    """Tests for _extract_brush_range() -- Plotly relayoutData parsing."""
+
+    def test_zoom_range(self):
+        result = _extract_brush_range({
+            "xaxis.range[0]": "2024-01-01",
+            "xaxis.range[1]": "2024-01-31",
+        })
+        assert result == {"start": "2024-01-01", "end": "2024-01-31"}
+
+    def test_zoom_range_with_time(self):
+        result = _extract_brush_range({
+            "xaxis.range[0]": "2024-01-01 12:30:00",
+            "xaxis.range[1]": "2024-01-31 23:59:59",
+        })
+        assert result == {"start": "2024-01-01", "end": "2024-01-31"}
+
+    def test_autorange_clears(self):
+        result = _extract_brush_range({"xaxis.autorange": True})
+        assert result is None
+
+    def test_irrelevant_event_no_update(self):
+        from dash import no_update
+        result = _extract_brush_range({"legend.click": True})
+        assert result is no_update
+
+    def test_empty_dict_no_update(self):
+        from dash import no_update
+        result = _extract_brush_range({})
+        assert result is no_update
 
 
 class TestCallbacksIntegration:

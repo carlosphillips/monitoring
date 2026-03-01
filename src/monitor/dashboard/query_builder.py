@@ -137,6 +137,21 @@ def append_where(
     return where_sql, params
 
 
+def build_brush_where(brush_range: dict | None) -> tuple[str, list[str]]:
+    """Build WHERE conditions from a brush time range.
+
+    Returns:
+        (sql_fragment, params) -- no "WHERE" prefix.
+    """
+    if not brush_range:
+        return "", []
+    start = brush_range.get("start")
+    end = brush_range.get("end")
+    if not start or not end:
+        return "", []
+    return "end_date >= ? AND end_date <= ?", [start, end]
+
+
 def _parse_group_key_conditions(
     group_key: str,
     conditions: list[str],
