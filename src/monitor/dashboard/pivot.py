@@ -163,9 +163,8 @@ def build_category_table(
 
         def _category_leaf(leaf_data, dim, group_val, group_path):
             cells = _aggregate_category_cells(leaf_data, column_dim, col_values)
-            group_key = f"{dim}={group_val}"
             return _render_category_html_table(
-                cells, column_dim, col_values, group_key,
+                cells, column_dim, col_values, group_path,
                 selected_cells=selected_cells,
             )
 

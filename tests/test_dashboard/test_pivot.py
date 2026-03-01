@@ -705,6 +705,47 @@ class TestBuildCategoryTable:
         assert len(nested) == 2
 
 
+class TestCategoryCellGroupPath:
+    """Tests for cat-cell IDs containing full group path in hierarchical mode."""
+
+    def test_single_level_cell_group_key(self):
+        data = [
+            {"layer": "structural", "portfolio": "a", "direction": "upper", "count": 3},
+        ]
+        result = build_category_table(data, "portfolio", hierarchy=["layer"])
+        # Open the Details to find the table
+        details = result[0]
+        content_div = details.children[1]
+        table = content_div.children
+        # Find the data row cells
+        data_row = table.children[1].children  # Tbody -> Tr
+        cell = data_row.children[1]  # first data cell (after label)
+        assert cell.id["type"] == "cat-cell"
+        assert cell.id["group"] == "layer=structural"
+
+    def test_two_level_cell_has_full_group_path(self):
+        data = [
+            {
+                "layer": "structural",
+                "window": "daily",
+                "portfolio": "a",
+                "direction": "upper",
+                "count": 3,
+            },
+        ]
+        result = build_category_table(data, "portfolio", hierarchy=["layer", "window"])
+        # Navigate: top Details -> content div -> nested Details -> content div -> table
+        top_details = result[0]
+        nested_details = top_details.children[1].children[0]
+        content_div = nested_details.children[1]
+        table = content_div.children
+        data_row = table.children[1].children  # Tbody -> Tr
+        cell = data_row.children[1]
+        assert cell.id["type"] == "cat-cell"
+        # Must include the full hierarchical path, not just leaf
+        assert cell.id["group"] == "layer=structural|window=daily"
+
+
 class TestBuildCategoryTree:
     """Tests for _build_tree() in category mode."""
 

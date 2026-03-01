@@ -1,0 +1,113 @@
+---
+title: Dashboard Interaction Improvements
+date: 2026-02-28
+status: brainstorm
+tags: [dashboard, interactions, selection, timeline, hierarchy, ux]
+---
+
+# Dashboard Interaction Improvements
+
+## What We're Building
+
+A set of interaction improvements to the Breach Explorer Dashboard that make it behave like a proper analytical tool — multi-select, time range brushing, expand state persistence, aggregated collapsed views, cross-filtering from group headers, keyboard navigation, and CSV export. These changes transform the dashboard from a view-only tool into an interactive exploration environment for risk managers.
+
+## Why This Approach
+
+The current dashboard supports single-click selection and basic filtering. These changes address specific friction points: losing navigation context on hierarchy changes, inability to compare time ranges across groups, no multi-select, no way to export results. Together they create a cohesive interaction model where the pivot view steers what appears in the detail view.
+
+## Key Decisions
+
+### 1. Preserve Expand/Collapse State When Adding Hierarchy Levels
+
+**Problem:** Adding a new leaf group level (e.g., going from Portfolio to Portfolio > Factor) re-renders the entire pivot. All groups collapse, losing the user's navigation context.
+
+**Solution:** Track which groups are expanded in a `dcc.Store` keyed by group path (e.g., `"portfolio=A"` or `"portfolio=A|layer=structural"` for nested levels). When the pivot re-renders after adding a level, set `open=True` on `html.Details` elements whose keys match the stored set. A small clientside callback syncs `<details>` toggle events back to the store, since Dash's `html.Details` doesn't natively fire server-side callbacks on open/close.
+
+### 2. Brush-Select Syncs Across All Timelines
+
+**Problem:** In a hierarchical timeline view (e.g., Portfolio > Factor), each portfolio has its own timeline chart. Selecting a time range on one chart doesn't affect the others, making cross-portfolio comparison difficult.
+
+**Solution:** When the user brush-selects a time range on any timeline chart (via Plotly's built-in box select — `relayoutData` with `xaxis.range[0]` and `xaxis.range[1]`), that same range highlight appears on all timeline charts in the pivot view. The selected range is stored centrally in a `dcc.Store` and applied as a `vrect` shape overlay to every chart during rendering. Switching from timeline to category mode clears the brush selection, since there is no timeline to display it on.
+
+### 3. Brush-Select Immediately Filters Detail View (But Not Pivot)
+
+**Problem:** The user wants immediate feedback on what breaches fall within a selected time range, but doesn't want the pivot charts to jump around while exploring.
+
+**Solution:** A brush-selection on any timeline immediately filters the detail view to show only breaches within that time range. The pivot view does not change — it continues showing the full (or previously committed) date range. This lets the user explore different time slices in the detail view without disrupting the visual context of the pivot. Brush-select and cell/bar multi-select (item 6) are independent filters that combine as intersection — brush constrains by time range, cell selection constrains by specific bars or cells within that range.
+
+### 4. "Apply" Button to Commit Time Selection to Date Filters
+
+**Problem:** Auto-zooming the pivot to the selected time range is disorienting and hard to undo.
+
+**Solution:** Instead of auto-zooming, a button near the date filter controls (e.g., "Apply selection") becomes active when a brush-selection exists. Clicking it updates the date range filters to match the selection, which then re-queries and re-renders the pivot view. After applying, the brush selection clears — the pivot now shows only the committed date range, and the "Back" button (item 5) is the way to undo.
+
+### 5. Back Stack for Date Filter History
+
+**Problem:** After drilling into successive time ranges, there's no way to retrace steps.
+
+**Solution:** Maintain a stack of previous date filter states. Each time the user applies a time selection (via the "Apply" button), the current date range is pushed onto the stack. A "Back" button pops the stack and restores the previous date range. This gives browser-back-button-like behavior for time navigation. The back stack restores date filters only — it does not restore brush selection state or pivot cell selections.
+
+### 6. Multi-Select Cells and Bars
+
+**Problem:** Single-click selection limits analysis to one cell or bar at a time. Risk managers need to select multiple items to compare or to filter the detail view to a broader subset.
+
+**Solution:**
+
+- **Shift-click** selects a contiguous range — consecutive time buckets in timeline mode, or cells in the same row between the anchor and target in category mode
+- **Ctrl/Cmd-click** toggles individual cells or bars on/off
+- **Selection is scoped to a single group** — selecting in a different group clears the previous selection. This keeps the interaction predictable within the hierarchy.
+- **Visual feedback:** Selected cells/bars get a solid 2px dark border to distinguish them from the color-intensity encoding that represents breach count.
+- **Detail filtering:** The union of all selected cells filters the detail view.
+
+The `pivot-selection-store` is refactored from a single dict to a list of selection dicts to support multiple selections. Group header filtering (item 8) and cell selection combine as intersection — clicking a header scopes the detail view to that group, and selecting cells within it further narrows the result.
+
+### 7. Collapsed Groups Show Aggregated Chart
+
+**Problem:** Collapsing a group in the pivot view hides its content entirely. In a Portfolio > Factor hierarchy, collapsing a portfolio shows only the group header — losing the visual summary of that portfolio's breach pattern.
+
+**Solution:** When a group is collapsed, show a full-size chart of the same type with the aggregated data for that group. For example, collapsing a portfolio in timeline mode shows a stacked bar chart of all that portfolio's breaches (summed across factors), identical in size and style to any leaf-level chart. The collapsed state is not "hidden content" but "coarser content" — the user always sees a visualization, just at the parent's aggregation level.
+
+The aggregated chart lives inside the `<summary>` element (alongside the group label) and is hidden via CSS when expanded (`details[open] > summary .agg-chart { display: none }`). This avoids fighting native `<details>` behavior, which hides non-summary content on collapse. The aggregated charts are read-only — not clickable or selectable for pivot filtering.
+
+### 8. Clickable Group Headers Cross-Filter Detail View
+
+**Problem:** To filter the detail view to a specific portfolio or group, the user must use the filter bar dropdowns — even when the group is right there in the pivot view.
+
+**Solution:** Clicking a group header label in the pivot view (e.g., the "Portfolio A" text in a Portfolio > Factor hierarchy) filters the detail view to show only breaches belonging to that group. The chevron/triangle remains the expand/collapse target; the group label text next to it is the cross-filter target. The label gets an underline on hover to signal it's clickable, visually distinguishing it from the expand/collapse action. Clicking the same header again clears the filter.
+
+### 9. Keyboard Navigation
+
+**Problem:** Mouse-only interaction slows down power users who spend extended time in the dashboard.
+
+**Solution:**
+
+- **Arrow keys** navigate between cells in category mode or between bars in timeline mode
+- **Enter** expands/collapses the currently focused group
+- **Escape** clears the current selection
+- Focus is indicated with a visible outline on the active cell/bar/group
+
+This is lower priority than items 1-8 and can be implemented incrementally.
+
+### 10. CSV Export of Filtered Detail View
+
+**Problem:** After drilling down through filters, hierarchy, time selection, and pivot selection to isolate a specific set of breaches, there's no way to export that result.
+
+**Solution:** A download button above the detail table exports the current filtered result as a CSV file. The export respects all active filters — filter bar selections, pivot cell selections, group header filters, and time brush selections. The filename includes a timestamp for traceability (e.g., `breaches_2026-02-28_143022.csv`). Uses Dash's `dcc.Download` component triggered by a button click callback.
+
+## Implementation Dependencies
+
+The changes have natural dependencies that suggest an implementation order:
+
+1. **Expand state tracking** (item 1) — foundational, needed before item 7
+2. **Selection store refactor** (item 6 prereq) — refactor `pivot-selection-store` from single dict to list
+3. **Multi-select** (item 6) — builds on the new store
+4. **Aggregated collapsed view** (item 7) — builds on expand state tracking
+5. **Brush-select and sync** (items 2, 3) — independent of above
+6. **Apply button and back stack** (items 4, 5) — builds on brush-select
+7. **Clickable group headers** (item 8) — independent, quick win
+8. **CSV export** (item 10) — independent, quick win
+9. **Keyboard navigation** (item 9) — last, incremental
+
+## Open Questions
+
+None — all key decisions resolved through discussion.
