@@ -13,12 +13,13 @@ Usage:
     )
 
     if __name__ == "__main__":
-        app.run(debug=True)
+        app.run(debug=False)
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -480,11 +481,14 @@ if __name__ == "__main__":
     # Development server
     from pathlib import Path
 
+    # Enable debug only if DASH_DEBUG environment variable is explicitly set to 'true'
+    debug_mode = os.getenv("DASH_DEBUG", "false").lower() == "true"
+
     # Adjust paths as needed for your environment
     app = create_app(
         breaches_parquet=Path("output/all_breaches_consolidated.parquet"),
         attributions_parquet=Path("output/all_attributions_consolidated.parquet"),
-        debug=True,
+        debug=debug_mode,
     )
 
-    app.run(debug=True, host="127.0.0.1", port=8050)
+    app.run(debug=debug_mode, host="127.0.0.1", port=8050)
