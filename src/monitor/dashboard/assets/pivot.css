@@ -1,3 +1,41 @@
+/* JetBrains Mono for numeric data columns */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+/* Page background */
+body {
+    background-color: #f0f2f5;
+}
+
+/* Navbar subtle depth */
+.navbar {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Filter bar: light background, bottom border only, no card border */
+.filter-bar {
+    background-color: #f7f8fa;
+    border: none !important;
+    border-bottom: 1px solid #dee2e6 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+}
+.filter-bar .card-body {
+    background-color: transparent;
+}
+
+/* Monospace breach count display */
+.breach-count-display {
+    font-family: 'JetBrains Mono', 'IBM Plex Mono', 'Fira Code', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: #495057;
+}
+
+/* Section spacer replacing <hr> dividers */
+.section-spacer {
+    height: 24px;
+}
+
 /* Hide aggregated chart when group is expanded */
 details[open] > summary .agg-chart {
     display: none;

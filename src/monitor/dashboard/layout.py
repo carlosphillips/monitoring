@@ -13,6 +13,7 @@ from monitor.dashboard.constants import (
     DIMENSION_LABELS,
     GROUPABLE_DIMENSIONS,
     MAX_HIERARCHY_LEVELS,
+    MONO_FONT,
     ROW_COLOR_LOWER,
     ROW_COLOR_UPPER,
     TIME,
@@ -55,12 +56,12 @@ def build_layout(filter_options: dict[str, list[str]], date_range: tuple[str, st
                 [
                     # Filter bar
                     _build_filter_bar(filter_options, min_date, max_date),
-                    html.Hr(className="my-3"),
+                    html.Div(className="section-spacer"),
                     # Row Grouping controls
                     _build_hierarchy_section(),
                     # Pivot View
                     _build_pivot_section(),
-                    html.Hr(className="my-3"),
+                    html.Div(className="section-spacer"),
                     # Detail View
                     _build_detail_section(),
                 ],
@@ -157,11 +158,10 @@ def _build_filter_bar(
                             [
                                 dbc.Label("Matching Breaches", size="sm"),
                                 html.Div(
-                                    dbc.Badge(
+                                    html.Span(
                                         id="breach-count-badge",
                                         children="0",
-                                        color="primary",
-                                        className="fs-6",
+                                        className="breach-count-display",
                                     ),
                                     className="mt-1",
                                 ),
@@ -207,7 +207,7 @@ def _build_filter_bar(
                 ),
             ]
         ),
-        className="mb-3",
+        className="mb-0 filter-bar",
     )
 
 
@@ -261,7 +261,7 @@ def _build_hierarchy_section() -> html.Div:
             dbc.Row(
                 [
                     dbc.Col(
-                        html.H6("Row Grouping", className="mb-0 text-muted"),
+                        html.H5("Row Grouping", className="mb-0"),
                         md="auto",
                     ),
                     dbc.Col(
@@ -271,9 +271,10 @@ def _build_hierarchy_section() -> html.Div:
                                 dbc.Button(
                                     "+ Add level",
                                     id="hierarchy-add-btn",
-                                    color="light",
+                                    color="link",
                                     size="sm",
-                                    className="border mt-1",
+                                    className="text-muted mt-1 p-0",
+                                    style={"fontSize": "13px", "textDecoration": "none"},
                                 ),
                             ],
                         ),
@@ -364,30 +365,30 @@ def _build_detail_section() -> html.Div:
         {"name": "Factor", "id": "factor", "type": "text"},
         {"name": "Window", "id": "window", "type": "text"},
         {"name": "Direction", "id": "direction", "type": "text"},
-        {"name": "Value", "id": "value", "type": "numeric", "format": {"specifier": ".6f"}},
+        {"name": "Value", "id": "value", "type": "numeric", "format": {"specifier": ".4f"}},
         {
-            "name": "Threshold Min",
+            "name": "Thresh Min",
             "id": "threshold_min",
             "type": "numeric",
-            "format": {"specifier": ".6f"},
+            "format": {"specifier": ".4f"},
         },
         {
-            "name": "Threshold Max",
+            "name": "Thresh Max",
             "id": "threshold_max",
             "type": "numeric",
-            "format": {"specifier": ".6f"},
+            "format": {"specifier": ".4f"},
         },
         {
             "name": "Distance",
             "id": "distance",
             "type": "numeric",
-            "format": {"specifier": ".6f"},
+            "format": {"specifier": ".4f"},
         },
         {
             "name": "Abs Value",
             "id": "abs_value",
             "type": "numeric",
-            "format": {"specifier": ".6f"},
+            "format": {"specifier": ".4f"},
         },
     ]
 
@@ -429,6 +430,15 @@ def _build_detail_section() -> html.Div:
                     "border": "1px solid #dee2e6",
                     "fontSize": "13px",
                 },
+                style_cell_conditional=[
+                    {
+                        "if": {"column_id": col},
+                        "fontFamily": MONO_FONT,
+                        "fontSize": "12px",
+                        "textAlign": "right",
+                    }
+                    for col in ("value", "threshold_min", "threshold_max", "distance", "abs_value")
+                ],
                 style_data_conditional=[
                     {
                         "if": {"filter_query": '{direction} = "upper"'},

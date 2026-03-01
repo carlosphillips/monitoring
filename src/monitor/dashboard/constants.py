@@ -16,13 +16,24 @@ GROUPABLE_DIMENSIONS: tuple[str, ...] = (PORTFOLIO, LAYER, FACTOR, WINDOW, DIREC
 # Dimensions usable as column axis
 COLUMN_AXIS_DIMENSIONS: tuple[str, ...] = (TIME, PORTFOLIO, LAYER, FACTOR, WINDOW)
 
-# Color scheme: lower = red, upper = blue
-COLOR_LOWER = "#d62728"
-COLOR_UPPER = "#1f77b4"
+# Color scheme: lower = muted crimson, upper = deep navy
+COLOR_LOWER = "#c0392b"
+COLOR_UPPER = "#1e3a5f"
+
+# RGB triplets for f-string interpolation in split-cell backgrounds
+COLOR_LOWER_RGBA = "192, 57, 43"
+COLOR_UPPER_RGBA = "30, 58, 95"
 
 # Row color tints for Detail DataTable
-ROW_COLOR_LOWER = "rgba(214, 39, 40, 0.08)"
-ROW_COLOR_UPPER = "rgba(31, 119, 180, 0.08)"
+ROW_COLOR_LOWER = "rgba(192, 57, 43, 0.12)"
+ROW_COLOR_UPPER = "rgba(30, 58, 95, 0.12)"
+
+# Brush overlay colors
+BRUSH_FILL_RGBA = "rgba(13, 110, 253, 0.1)"
+BRUSH_LINE_RGBA = "rgba(13, 110, 253, 0.5)"
+
+# Monospace font stack for numeric data
+MONO_FONT = "'JetBrains Mono', 'IBM Plex Mono', 'Fira Code', monospace"
 
 # Display label for residual breaches with no factor
 NO_FACTOR_LABEL = "(no factor)"

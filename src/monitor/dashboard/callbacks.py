@@ -60,7 +60,8 @@ _DETAIL_COLUMNS = (
     "abs_value",
 )
 _DETAIL_SELECT = (
-    'end_date, portfolio, layer, COALESCE(NULLIF(factor, \'\'), ?) AS factor, '
+    "STRFTIME('%Y-%m-%d', end_date) AS end_date, portfolio, layer, "
+    "COALESCE(NULLIF(factor, ''), ?) AS factor, "
     '"window", direction, value, threshold_min, threshold_max, distance, abs_value'
 )
 
@@ -224,6 +225,20 @@ def _extract_brush_range(relayout_data: dict) -> dict | None:
     return no_update
 
 
+def _round_sig(x: float, sig: int = 4) -> float:
+    """Round a float to *sig* significant figures.
+
+    Avoids scientific-notation artefacts on Dash range-slider tooltips.
+    Values smaller than 1e-6 are floored to 0.
+    """
+    if x == 0 or abs(x) < 1e-6:
+        return 0.0
+    from math import floor, log10
+
+    digits = sig - 1 - floor(log10(abs(x)))
+    return round(x, digits)
+
+
 def register_callbacks(app: dash.Dash) -> None:
     """Register all dashboard callbacks on the Dash app."""
 
@@ -250,12 +265,10 @@ def register_callbacks(app: dash.Dash) -> None:
         if row is None or row[0] is None:
             return 0, 1, [0, 1], 0, 1, [0, 1]
 
-        abs_min, abs_max, dist_min, dist_max = (
-            float(row[0]),
-            float(row[1]),
-            float(row[2]),
-            float(row[3]),
-        )
+        abs_min = _round_sig(float(row[0]))
+        abs_max = _round_sig(float(row[1]))
+        dist_min = _round_sig(float(row[2]))
+        dist_max = _round_sig(float(row[3]))
         return abs_min, abs_max, [abs_min, abs_max], dist_min, dist_max, [dist_min, dist_max]
 
     @app.callback(

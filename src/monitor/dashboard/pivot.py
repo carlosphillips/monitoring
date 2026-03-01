@@ -10,11 +10,16 @@ import plotly.graph_objects as go
 from dash import dcc, html
 
 from monitor.dashboard.constants import (
+    BRUSH_FILL_RGBA,
+    BRUSH_LINE_RGBA,
     COLOR_LOWER,
+    COLOR_LOWER_RGBA,
     COLOR_UPPER,
+    COLOR_UPPER_RGBA,
     DAILY_THRESHOLD,
     DIMENSION_LABELS,
     MAX_PIVOT_GROUPS,
+    MONO_FONT,
     NO_FACTOR_LABEL,
     WEEKLY_THRESHOLD,
     granularity_to_trunc,
@@ -45,6 +50,7 @@ def build_timeline_figure(
     bucket_data: list[dict],
     granularity: str,
     brush_range: dict | None = None,
+    show_legend: bool = True,
 ) -> go.Figure:
     """Build a stacked bar chart from pre-bucketed data.
 
@@ -52,6 +58,7 @@ def build_timeline_figure(
         bucket_data: List of dicts with keys: time_bucket, direction, count.
         granularity: Current time granularity label (for axis title).
         brush_range: Optional {"start": str, "end": str} to draw a vrect overlay.
+        show_legend: Whether to display the legend (default True).
 
     Returns:
         Plotly Figure with stacked bars (lower=red on bottom, upper=blue on top).
@@ -75,6 +82,12 @@ def build_timeline_figure(
     lower_counts = [lower_buckets.get(b, 0) for b in all_buckets]
     upper_counts = [upper_buckets.get(b, 0) for b in all_buckets]
 
+    # Compute total counts per bucket for hover customdata
+    total_counts = [
+        lower_buckets.get(b, 0) + upper_buckets.get(b, 0) for b in all_buckets
+    ]
+    customdata = [[t] for t in total_counts]
+
     fig = go.Figure()
 
     fig.add_trace(
@@ -83,7 +96,8 @@ def build_timeline_figure(
             y=lower_counts,
             name="Lower",
             marker_color=COLOR_LOWER,
-            hovertemplate="<b>%{x}</b><br>Lower: %{y}<extra></extra>",
+            customdata=customdata,
+            hovertemplate="<b>%{x}</b><br>Lower: %{y}<br>Total: %{customdata[0]}<extra></extra>",
         )
     )
 
@@ -93,7 +107,8 @@ def build_timeline_figure(
             y=upper_counts,
             name="Upper",
             marker_color=COLOR_UPPER,
-            hovertemplate="<b>%{x}</b><br>Upper: %{y}<extra></extra>",
+            customdata=customdata,
+            hovertemplate="<b>%{x}</b><br>Upper: %{y}<br>Total: %{customdata[0]}<extra></extra>",
         )
     )
 
@@ -109,26 +124,29 @@ def build_timeline_figure(
                 x1=brush_range["end"],
                 y0=0,
                 y1=1,
-                fillcolor="rgba(13, 110, 253, 0.1)",
-                line=dict(color="rgba(13, 110, 253, 0.5)", width=1),
+                fillcolor=BRUSH_FILL_RGBA,
+                line=dict(color=BRUSH_LINE_RGBA, width=1),
                 layer="below",
             )
         )
 
+    tick_font = dict(family=MONO_FONT, size=11)
+
     fig.update_layout(
         barmode="stack",
+        showlegend=show_legend,
         xaxis_title="Time" if granularity == "Daily" else f"Time ({granularity})",
         yaxis_title="Breach Count",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=50, r=20, t=30, b=50),
+        margin=dict(l=50, r=20, t=20, b=40),
         plot_bgcolor="white",
-        bargap=0.15,
+        bargap=0.05,
         dragmode="zoom",
         shapes=shapes,
     )
 
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="#eee")
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="#eee")
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="#eee", tickfont=tick_font)
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="#eee", tickfont=tick_font)
 
     return fig
 
@@ -349,24 +367,26 @@ def _build_split_cell(upper: int, lower: int, intensity: float) -> html.Div:
     return html.Div(
         [
             html.Div(
-                str(upper) if upper > 0 else "",
+                str(upper) if upper > 0 else "\u2013",
                 style={
-                    "backgroundColor": f"rgba(31, 119, 180, {alpha if upper > 0 else 0})",
+                    "backgroundColor": f"rgba({COLOR_UPPER_RGBA}, {alpha if upper > 0 else 0})",
                     "color": COLOR_UPPER if upper > 0 else "#ccc",
                     "padding": "4px 8px",
                     "fontSize": "13px",
+                    "fontFamily": MONO_FONT,
                     "fontWeight": "bold" if upper > 0 else "normal",
                     "minHeight": "24px",
                     "lineHeight": "24px",
                 },
             ),
             html.Div(
-                str(lower) if lower > 0 else "",
+                str(lower) if lower > 0 else "\u2013",
                 style={
-                    "backgroundColor": f"rgba(214, 39, 40, {alpha if lower > 0 else 0})",
+                    "backgroundColor": f"rgba({COLOR_LOWER_RGBA}, {alpha if lower > 0 else 0})",
                     "color": COLOR_LOWER if lower > 0 else "#ccc",
                     "padding": "4px 8px",
                     "fontSize": "13px",
+                    "fontFamily": MONO_FONT,
                     "fontWeight": "bold" if lower > 0 else "normal",
                     "minHeight": "24px",
                     "lineHeight": "24px",
@@ -605,6 +625,9 @@ def build_hierarchical_pivot(
     # Build a tree of groups from the flat data
     tree = _build_tree(grouped_data, hierarchy, level=0)
 
+    # Mutable counter to show legend only on the first leaf chart
+    _chart_counter = [0]
+
     def _timeline_leaf(leaf_data, dim, group_val, group_path):
         bucket_data = [
             {
@@ -614,7 +637,12 @@ def build_hierarchical_pivot(
             }
             for row in leaf_data
         ]
-        fig = build_timeline_figure(bucket_data, granularity, brush_range=brush_range)
+        fig = build_timeline_figure(
+            bucket_data, granularity,
+            brush_range=brush_range,
+            show_legend=(_chart_counter[0] == 0),
+        )
+        _chart_counter[0] += 1
         return dcc.Graph(
             id={"type": "group-timeline-chart", "group": group_path},
             figure=fig,
@@ -633,11 +661,11 @@ def build_hierarchical_pivot(
             {"time_bucket": k[0], "direction": k[1], "count": v}
             for k, v in agg.items()
         ]
-        fig = build_timeline_figure(bucket_data, granularity)
+        fig = build_timeline_figure(bucket_data, granularity, show_legend=False)
         return dcc.Graph(
             figure=fig,
             config={"displayModeBar": False, "staticPlot": True},
-            style={"height": "120px"},
+            style={"height": "180px"},
         )
 
     # Render the tree as nested Details/Summary components
