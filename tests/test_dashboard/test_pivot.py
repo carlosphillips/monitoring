@@ -125,8 +125,8 @@ class TestBuildTimelineFigure:
             {"time_bucket": "2024-01-01", "direction": "upper", "count": 1},
         ]
         fig = build_timeline_figure(data, "Daily")
-        assert fig.data[0].marker.color == "#d62728"  # lower = red
-        assert fig.data[1].marker.color == "#1f77b4"  # upper = blue
+        assert fig.data[0].marker.color == "#c0392b"  # lower = muted crimson
+        assert fig.data[1].marker.color == "#1e3a5f"  # upper = deep navy
 
     def test_buckets_sorted(self):
         data = [
@@ -556,18 +556,18 @@ class TestBuildSplitCell:
 
     def test_zero_upper(self):
         cell = _build_split_cell(0, 5, 0.5)
-        assert cell.children[0].children == ""  # empty string for zero
+        assert cell.children[0].children == "\u2013"  # en-dash for zero
         assert cell.children[1].children == "5"
 
     def test_zero_lower(self):
         cell = _build_split_cell(4, 0, 0.5)
         assert cell.children[0].children == "4"
-        assert cell.children[1].children == ""
+        assert cell.children[1].children == "\u2013"
 
     def test_both_zero(self):
         cell = _build_split_cell(0, 0, 0.0)
-        assert cell.children[0].children == ""
-        assert cell.children[1].children == ""
+        assert cell.children[0].children == "\u2013"
+        assert cell.children[1].children == "\u2013"
 
 
 class TestAggregateCategoryCells:
