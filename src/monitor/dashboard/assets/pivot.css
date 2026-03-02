@@ -36,8 +36,20 @@ body {
     height: 24px;
 }
 
-/* Collapsed chart: visible when <details> closed, hidden when open.
-   Overrides the UA stylesheet rule that hides non-<summary> children. */
+/* Chrome 120+ hides <details> content via ::details-content { content-visibility: hidden }
+   instead of display:none on children. Override this so we control visibility ourselves. */
+details::details-content {
+    content-visibility: visible !important;
+    display: block !important;
+}
+
+/* Non-leaf children tree: hide when <details> is closed.
+   Targets the plain div (no .collapsed-chart / .always-visible class). */
+details:not([open]) > div:not(.collapsed-chart):not(.always-visible) {
+    display: none !important;
+}
+
+/* Collapsed chart: visible when <details> closed, hidden when open */
 details:not([open]) > .collapsed-chart {
     display: block !important;
 }
