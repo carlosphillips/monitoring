@@ -36,9 +36,18 @@ body {
     height: 24px;
 }
 
-/* Hide aggregated chart when group is expanded */
-details[open] > summary .agg-chart {
+/* Collapsed chart: visible when <details> closed, hidden when open.
+   Overrides the UA stylesheet rule that hides non-<summary> children. */
+details:not([open]) > .collapsed-chart {
+    display: block !important;
+}
+details[open] > .collapsed-chart {
     display: none;
+}
+
+/* Leaf chart: always visible regardless of <details> open/closed state */
+details:not([open]) > .always-visible {
+    display: block !important;
 }
 
 /* Clickable group header hover */

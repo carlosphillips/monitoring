@@ -407,10 +407,14 @@ def _build_tree(
     Leaf data is only stored at the leaf level of the hierarchy to avoid
     O(n * depth) memory from duplicating rows up the tree.
 
+    Non-leaf nodes also store ``agg_data`` — timeline bucket data aggregated
+    across all descendants — so collapsed groups can render a summary chart.
+
     Returns:
         Dict mapping group_value -> {
             "count": total_breach_count,
             "leaf_data": list of raw row dicts (only at leaf level),
+            "agg_data": aggregated timeline buckets (only at non-leaf level),
             "children": sub-tree dict (only at non-leaf level),
         }
     """
@@ -434,28 +438,22 @@ def _build_tree(
         if is_leaf:
             entry["leaf_data"] = data["leaf_data"]
         else:
+            # Aggregate children_rows into timeline buckets for collapsed chart.
+            # Only when data has time_bucket/direction (timeline mode, not category).
+            sample = data["children_rows"][0] if data["children_rows"] else {}
+            if "time_bucket" in sample and "direction" in sample:
+                agg: dict[tuple[str, str], int] = {}
+                for row in data["children_rows"]:
+                    key = (str(row["time_bucket"]), str(row["direction"]))
+                    agg[key] = agg.get(key, 0) + int(row["count"])
+                entry["agg_data"] = [
+                    {"time_bucket": k[0], "direction": k[1], "count": v}
+                    for k, v in agg.items()
+                ]
             entry["children"] = _build_tree(
                 data["children_rows"], hierarchy, level + 1
             )
         result[group_val] = entry
-    return result
-
-
-def _collect_leaf_data(node: dict) -> list[dict]:
-    """Lazily collect all leaf_data from a tree node and its descendants.
-
-    For leaf nodes (those with "leaf_data"), returns the leaf_data directly.
-    For non-leaf nodes (those with "children"), recursively collects from
-    all descendant leaf nodes.
-
-    This avoids storing duplicated leaf data at every hierarchy level,
-    reducing memory from O(n * depth) to O(n).
-    """
-    if "leaf_data" in node:
-        return node["leaf_data"]
-    result: list[dict] = []
-    for child_node in node.get("children", {}).values():
-        result.extend(_collect_leaf_data(child_node))
     return result
 
 
@@ -473,6 +471,15 @@ def _render_tree(
 
     This is a unified renderer used by both timeline and category modes.
 
+    When ``render_collapsed_fn`` is provided (timeline mode), each group gets
+    a CSS-toggled collapsed chart:
+
+    - **Leaf nodes**: chart wrapped in ``.always-visible`` — stays visible
+      regardless of ``<details>`` open/closed state.
+    - **Non-leaf nodes**: a ``.collapsed-chart`` div (visible when closed,
+      hidden when open) plus the children tree (standard ``<details>``
+      show/hide behaviour).
+
     Args:
         tree: Nested dict from _build_tree.
         hierarchy: List of dimension names for grouping.
@@ -481,8 +488,8 @@ def _render_tree(
         level: Current depth in the hierarchy (0-based).
         expand_state: Set of group paths that should be open.
         parent_path: Path prefix from parent groups.
-        render_agg_fn: Optional callable to render aggregated chart for
-            collapsed groups. Same signature as render_leaf_fn.
+        render_agg_fn: Optional callable(agg_data, dim, group_val, group_path)
+            to render an aggregated chart for collapsed non-leaf groups.
         active_group_filter: Currently active group header filter path.
 
     Returns:
@@ -525,20 +532,8 @@ def _render_tree(
 
         is_open = (group_path in expand_state) if expand_state else False
 
-        # Only generate aggregated chart for collapsed groups.
-        # For non-leaf nodes, lazily collect leaf data from descendants
-        # instead of relying on pre-computed copies (avoids O(n*depth) memory).
-        agg_chart_div = html.Div(className="agg-chart")
-        if render_agg_fn and not is_open:
-            agg_leaf_data = _collect_leaf_data(data)
-            if agg_leaf_data:
-                agg_chart_div = html.Div(
-                    render_agg_fn(agg_leaf_data, dim, group_val, group_path),
-                    className="agg-chart",
-                )
-
         summary = html.Summary(
-            [label_span, count_span, agg_chart_div],
+            [label_span, count_span],
             style={
                 "cursor": "pointer",
                 "padding": "6px 10px",
@@ -551,9 +546,16 @@ def _render_tree(
 
         if is_leaf:
             leaf_content = render_leaf_fn(data["leaf_data"], dim, group_val, group_path)
+            # Leaf charts use .always-visible so the chart stays visible
+            # regardless of <details> open/closed state.
+            css_class = "always-visible" if render_agg_fn else ""
             children = [
                 summary,
-                html.Div(leaf_content, style={"paddingLeft": "20px"}),
+                html.Div(
+                    leaf_content,
+                    className=css_class or None,
+                    style={"paddingLeft": "20px"},
+                ),
             ]
         else:
             sub = _render_tree(
@@ -562,10 +564,20 @@ def _render_tree(
                 render_agg_fn=render_agg_fn,
                 active_group_filter=active_group_filter,
             )
-            children = [
-                summary,
+            children = [summary]
+            # Non-leaf: add collapsed chart (CSS-toggled) before children
+            if render_agg_fn and data.get("agg_data"):
+                children.append(
+                    html.Div(
+                        render_agg_fn(
+                            data["agg_data"], dim, group_val, group_path,
+                        ),
+                        className="collapsed-chart",
+                    )
+                )
+            children.append(
                 html.Div(sub, style={"paddingLeft": "20px"}),
-            ]
+            )
 
         components.append(html.Details(
             children,
@@ -650,28 +662,25 @@ def build_hierarchical_pivot(
             style={"height": "250px"},
         )
 
-    def _timeline_agg(leaf_data, dim, group_val, group_path):
-        """Render aggregated timeline chart for collapsed groups."""
-        # Sum counts per (time_bucket, direction) across the group
-        agg: dict[tuple[str, str], int] = {}
-        for row in leaf_data:
-            key = (str(row["time_bucket"]), row["direction"])
-            agg[key] = agg.get(key, 0) + int(row["count"])
-        bucket_data = [
-            {"time_bucket": k[0], "direction": k[1], "count": v}
-            for k, v in agg.items()
-        ]
-        fig = build_timeline_figure(bucket_data, granularity, show_legend=False)
+    def _timeline_collapsed(agg_data, dim, group_val, group_path):
+        """Render aggregated timeline chart for collapsed non-leaf groups."""
+        fig = build_timeline_figure(
+            agg_data, granularity,
+            brush_range=brush_range,
+            show_legend=(_chart_counter[0] == 0),
+        )
+        _chart_counter[0] += 1
         return dcc.Graph(
+            id={"type": "collapsed-timeline", "group": group_path},
             figure=fig,
-            config={"displayModeBar": False, "staticPlot": True},
-            style={"height": "180px"},
+            config={"displayModeBar": False},
+            style={"height": "250px"},
         )
 
     # Render the tree as nested Details/Summary components
     return _render_tree(
         tree, hierarchy, _timeline_leaf, level=0,
         expand_state=expand_state,
-        render_agg_fn=_timeline_agg,
+        render_agg_fn=_timeline_collapsed,
         active_group_filter=active_group_filter,
     )
