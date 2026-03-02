@@ -435,8 +435,10 @@ class TestBuildHierarchicalPivot:
         top_details = result[0]
         assert isinstance(top_details, html.Details)
 
-        # Children div should contain nested Details for each layer
-        children_div = top_details.children[1]
+        # children[1] is collapsed-chart div, children[2] is children div
+        collapsed_chart_div = top_details.children[1]
+        assert collapsed_chart_div.className == "collapsed-chart"
+        children_div = top_details.children[2]
         nested_items = children_div.children
         assert len(nested_items) == 2  # structural, tactical
         for item in nested_items:
@@ -473,12 +475,13 @@ class TestBuildHierarchicalPivot:
 
         # Top level: 1 group (portfolio_a)
         assert len(result) == 1
+        # Non-leaf: [summary, collapsed-chart, children_div]
         # Second level: 2 groups (structural, tactical)
-        level2 = result[0].children[1].children
+        level2 = result[0].children[2].children
         assert len(level2) == 2
-        # Third level under structural: 2 groups (HML, market)
-        level3 = level2[0].children[1].children
-        assert len(level3) == 2
+        # Third level under structural: also non-leaf at level 1, so children at index 2
+        level3 = level2[0].children[2].children
+        assert len(level3) == 2  # HML, market
 
     def test_singular_breach_label(self):
         data = [

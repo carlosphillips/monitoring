@@ -727,6 +727,25 @@ def register_callbacks(app: dash.Dash) -> None:
                     return _extract_brush_range(data)
         return no_update
 
+    @app.callback(
+        Output("brush-range-store", "data", allow_duplicate=True),
+        Input({"type": "collapsed-timeline", "group": ALL}, "relayoutData"),
+        prevent_initial_call=True,
+    )
+    def handle_collapsed_brush(relayout_data_list):
+        """Capture brush range from any collapsed group timeline chart."""
+        if not relayout_data_list:
+            return no_update
+        triggered = ctx.triggered_id
+        if triggered is None:
+            return no_update
+        for i, item in enumerate(ctx.inputs_list[0]):
+            if item["id"] == triggered:
+                data = relayout_data_list[i]
+                if data:
+                    return _extract_brush_range(data)
+        return no_update
+
     # --- Apply / Back callbacks ---
 
     @app.callback(

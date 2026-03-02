@@ -36,9 +36,30 @@ body {
     height: 24px;
 }
 
-/* Hide aggregated chart when group is expanded */
-details[open] > summary .agg-chart {
+/* Chrome 120+ hides <details> content via ::details-content { content-visibility: hidden }
+   instead of display:none on children. Override this so we control visibility ourselves. */
+details::details-content {
+    content-visibility: visible !important;
+    display: block !important;
+}
+
+/* Non-leaf children tree: hide when <details> is closed.
+   Targets the plain div (no .collapsed-chart / .always-visible class). */
+details:not([open]) > div:not(.collapsed-chart):not(.always-visible) {
+    display: none !important;
+}
+
+/* Collapsed chart: visible when <details> closed, hidden when open */
+details:not([open]) > .collapsed-chart {
+    display: block !important;
+}
+details[open] > .collapsed-chart {
     display: none;
+}
+
+/* Leaf chart: always visible regardless of <details> open/closed state */
+details:not([open]) > .always-visible {
+    display: block !important;
 }
 
 /* Clickable group header hover */
